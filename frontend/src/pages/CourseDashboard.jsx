@@ -11,6 +11,7 @@ const CourseDashboard = ({ products = [] }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [yearFilter, setYearFilter] = useState('all');
+  const [branchFilter, setBranchFilter] = useState('all');
 
   useEffect(() => {
     const fetchStudents = async () => {
@@ -46,9 +47,10 @@ const CourseDashboard = ({ products = [] }) => {
       const matchesSearch = student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesYear = yearFilter === 'all' || String(student.year) === String(yearFilter);
-      return matchesSearch && matchesYear;
+      const matchesBranch = branchFilter === 'all' || String(student.branch || '').toLowerCase() === String(branchFilter).toLowerCase();
+      return matchesSearch && matchesYear && matchesBranch;
     });
-  }, [students, searchTerm, yearFilter]);
+  }, [students, searchTerm, yearFilter, branchFilter]);
 
   const handleStudentUpdate = (studentId, updateData) => {
     const updatedStudents = students.map(student => {
@@ -82,6 +84,7 @@ const CourseDashboard = ({ products = [] }) => {
   };
 
   const yearOptions = Array.from(new Set(students.map(s => s.year))).sort((a, b) => a - b);
+  const branchOptions = Array.from(new Set(students.map(s => s.branch).filter(Boolean))).sort();
 
   const getCourseIcon = (course) => {
     switch (course) {
@@ -243,16 +246,28 @@ const CourseDashboard = ({ products = [] }) => {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <select 
-              value={yearFilter} 
-              onChange={(e) => setYearFilter(e.target.value)}
-              className="w-full lg:w-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="all">All Years</option>
-              {yearOptions.map(year => (
-                <option key={year} value={year}>Year {year}</option>
-              ))}
-            </select>
+            <div className="flex gap-3 w-full lg:w-auto">
+              <select
+                value={yearFilter}
+                onChange={(e) => setYearFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent flex-1 lg:flex-none"
+              >
+                <option value="all">All Years</option>
+                {yearOptions.map(year => (
+                  <option key={year} value={year}>Year {year}</option>
+                ))}
+              </select>
+              <select
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent flex-1 lg:flex-none"
+              >
+                <option value="all">All Branches</option>
+                {branchOptions.map(branch => (
+                  <option key={branch} value={branch}>{branch}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -263,12 +278,12 @@ const CourseDashboard = ({ products = [] }) => {
               <div className="text-6xl mb-4">👥</div>
               <h3 className="text-xl font-semibold text-gray-900 mb-2">No students found</h3>
               <p className="text-gray-600 mb-6">
-                {searchTerm || yearFilter !== 'all' 
-                  ? 'Try adjusting your search criteria' 
+                {searchTerm || yearFilter !== 'all' || branchFilter !== 'all'
+                  ? 'Try adjusting your search criteria'
                   : 'Start by adding students to this course'
                 }
               </p>
-              {!searchTerm && yearFilter === 'all' && (
+              {!searchTerm && yearFilter === 'all' && branchFilter === 'all' && (
                 <button 
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                   onClick={() => navigate('/add-student')}

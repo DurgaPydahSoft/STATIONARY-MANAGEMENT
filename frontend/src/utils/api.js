@@ -6,7 +6,7 @@ const getApiBaseUrl = () => {
   // Check if we're in production
   if (import.meta.env.PROD) {
     // Use environment variable if set (must start with VITE_ for Vite)
-    return import.meta.env.VITE_API_BASE_URL || '';
+    return import.meta.env.VITE_API_BASE_URL || 'https://stationary-management-sek4.onrender.com';
   }
   // In development, use relative URLs (Vite proxy will handle them)
   return '';

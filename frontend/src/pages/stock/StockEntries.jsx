@@ -132,29 +132,34 @@ const StockEntries = () => {
   }, [filteredEntries]);
 
   return (
-    <div>
+    <div className="p-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Stock Entries</h2>
-          <p className="text-gray-600 mt-1">View and manage all stock entry history</p>
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
+            <Package size={20} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Stock Entries</h2>
+            <p className="text-gray-600 text-sm mt-1">View and manage all stock entry history</p>
+          </div>
         </div>
         {filteredEntries.length > 0 && (
-          <div className="flex gap-4 text-sm">
-            <div className="bg-blue-50 px-4 py-2 rounded-lg">
-              <span className="text-gray-600">Total Quantity: </span>
-              <span className="font-semibold text-blue-700">{totalQuantity}</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl">
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+              <p className="text-sm text-gray-600 mb-1">Total Quantity</p>
+              <p className="text-2xl font-bold text-blue-700">{totalQuantity}</p>
             </div>
-            <div className="bg-green-50 px-4 py-2 rounded-lg">
-              <span className="text-gray-600">Total Cost: </span>
-              <span className="font-semibold text-green-700">{formatCurrency(totalCost)}</span>
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+              <p className="text-sm text-gray-600 mb-1">Total Cost</p>
+              <p className="text-2xl font-bold text-green-700">{formatCurrency(totalCost)}</p>
             </div>
           </div>
         )}
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-6">
+      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Search */}
           <div className="relative md:col-span-2">
@@ -223,7 +228,7 @@ const StockEntries = () => {
           {filteredEntries.map((entry) => (
             <div
               key={entry._id}
-              className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow"
+              className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-all hover:border-blue-300"
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -306,7 +311,9 @@ const StockEntries = () => {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-          <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Package className="w-8 h-8 text-gray-400" />
+          </div>
           <h3 className="text-xl font-semibold text-gray-900 mb-2">No stock entries found</h3>
           <p className="text-gray-600">
             {searchQuery || filters.product || filters.vendor || filters.startDate

@@ -249,16 +249,21 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
   };
 
   return (
-    <div>
+    <div className="p-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Products</h2>
-          <p className="text-gray-600 mt-1">Manage your product catalog</p>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center shadow-md">
+            <Package size={20} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Products</h2>
+            <p className="text-gray-600 text-sm mt-1">Manage your product catalog</p>
+          </div>
         </div>
         <button
           onClick={() => setShowAddProduct(true)}
-          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg hover:shadow-xl font-medium"
+          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-md hover:shadow-lg font-medium"
         >
           <Plus size={20} />
           Add New Product
@@ -266,7 +271,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-6">
+      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Search */}
           <div className="relative">
@@ -313,7 +318,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
 
       {/* Status Message */}
       {statusMsg && (
-        <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${
+        <div className={`mb-6 p-4 rounded-lg text-sm font-medium ${
           statusMsg.includes('successfully') 
             ? 'bg-green-50 text-green-700 border border-green-200' 
             : 'bg-red-50 text-red-700 border border-red-200'
@@ -334,7 +339,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
             return (
               <div 
                 key={product._id} 
-                className="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden hover:shadow-xl transition-all duration-300 group"
+                className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200 group"
               >
                 {/* Product Header */}
                 <div className="p-6 border-b border-gray-100">
@@ -394,8 +399,10 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
             );
           })
         ) : (
-          <div className="col-span-full bg-gray-50 rounded-2xl border border-gray-200 p-12 text-center">
-            <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <div className="col-span-full bg-gray-50 rounded-xl border border-gray-200 p-12 text-center">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Package className="w-8 h-8 text-gray-400" />
+            </div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">No products found</h3>
             <p className="text-gray-600 mb-6">
               {searchQuery || selectedCourse || selectedYear 
@@ -405,7 +412,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
             {!searchQuery && !selectedCourse && !selectedYear && (
               <button
                 onClick={() => setShowAddProduct(true)}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-md hover:shadow-lg"
               >
                 <Plus size={20} />
                 Add Product

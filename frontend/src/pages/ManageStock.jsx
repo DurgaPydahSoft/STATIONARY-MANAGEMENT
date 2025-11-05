@@ -16,12 +16,12 @@ const ManageStock = ({ itemCategories, addItemCategory, setItemCategories, curre
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6">
+    <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header Section */}
         <div className="mb-8">
           <div className="flex items-center gap-4 mb-6">
-            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
               <Archive className="w-7 h-7 text-white" />
             </div>
             <div>
@@ -31,7 +31,7 @@ const ManageStock = ({ itemCategories, addItemCategory, setItemCategories, curre
           </div>
 
           {/* Tabs Navigation */}
-          <div className="bg-white rounded-2xl shadow-md border border-gray-200 p-2">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2">
             <div className="flex gap-2">
               {tabs.map((tab) => {
                 const IconComponent = tab.icon;
@@ -39,9 +39,9 @@ const ManageStock = ({ itemCategories, addItemCategory, setItemCategories, curre
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
                       activeTab === tab.id
-                        ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
+                        ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
                         : 'text-gray-600 hover:bg-gray-100'
                     }`}
                   >
@@ -55,7 +55,7 @@ const ManageStock = ({ itemCategories, addItemCategory, setItemCategories, curre
         </div>
 
         {/* Tab Content */}
-        <div className="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
           {activeTab === 'products' && (
             <AddProduct
               itemCategories={itemCategories}

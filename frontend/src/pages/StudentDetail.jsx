@@ -66,8 +66,18 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
 
   // derive visible items for this student's course/year
   const visibleItems = (products || []).filter(p => {
+    // Course filter: if product has forCourse, it must match student's course
     if (p.forCourse && p.forCourse !== student.course) return false;
-    if (p.year && Number(p.year) !== Number(student.year)) return false;
+    
+    // Year filter: check both years (array) and year (single value) for backward compatibility
+    const productYears = p.years || (p.year ? [p.year] : []);
+    
+    // If product has specific years defined, student's year must be in that array
+    if (productYears.length > 0) {
+      if (!productYears.includes(Number(student.year))) return false;
+    }
+    // If product has no years specified (empty array), it applies to all years (for that course)
+    
     return true;
   });
 

@@ -116,16 +116,23 @@ const AddStock = ({ products = [], setProducts }) => {
   };
 
   return (
-    <div>
+    <div className="p-6">
       {/* Header */}
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Add Stock</h2>
-        <p className="text-gray-600 mt-1">Record new stock entries with vendor and invoice information</p>
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center shadow-md">
+            <Plus size={20} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Add Stock</h2>
+            <p className="text-gray-600 text-sm mt-1">Record new stock entries with vendor and invoice information</p>
+          </div>
+        </div>
       </div>
 
       {/* Status Message */}
       {statusMsg.message && (
-        <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${
+        <div className={`mb-6 p-4 rounded-lg text-sm font-medium ${
           statusMsg.type === 'success'
             ? 'bg-green-50 text-green-700 border border-green-200'
             : 'bg-red-50 text-red-700 border border-red-200'
@@ -137,10 +144,9 @@ const AddStock = ({ products = [], setProducts }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6">
-        {/* Form Section */}
-        <div>
-          <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Form Section */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
             {/* Product Selection */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -296,17 +302,18 @@ const AddStock = ({ products = [], setProducts }) => {
               />
             </div>
 
-            {/* Submit Button */}
+          {/* Submit Button */}
+          <div className="pt-4 border-t border-gray-200">
             <button
               type="submit"
               disabled={loading || !formData.product || !formData.vendor || !formData.quantity}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all shadow-lg hover:shadow-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all shadow-md hover:shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Save size={20} />
               {loading ? 'Adding Stock...' : 'Add Stock'}
             </button>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
     </div>
   );

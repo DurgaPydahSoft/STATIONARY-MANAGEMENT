@@ -1,46 +1,149 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { 
+  Users, GraduationCap, Package, ShoppingCart, DollarSign, 
+  TrendingUp, AlertCircle, Activity, Calendar, ArrowRight,
+  CreditCard, Wallet, TrendingDown, FileText, BarChart3
+} from 'lucide-react';
 import { apiUrl } from '../utils/api';
 
 const Dashboard = () => {
   const [courseStats, setCourseStats] = useState({});
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalStudents: 0,
+    totalTransactions: 0,
+    totalRevenue: 0,
+    pendingRevenue: 0,
+    totalProducts: 0,
+    totalStockValue: 0,
+    lowStockItems: 0,
+    totalVendors: 0,
+    todayTransactions: 0,
+    todayRevenue: 0,
+  });
+  const [recentTransactions, setRecentTransactions] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       
-      // Fetch academic config to get courses
       try {
+        // Fetch academic config to get courses
         const configRes = await fetch(apiUrl('/api/config/academic'));
+        let coursesList = [];
         if (configRes.ok) {
           const configData = await configRes.json();
-          const coursesList = configData.courses || [];
+          coursesList = configData.courses || [];
           setCourses(coursesList);
-          
-          // Fetch stats for each course
-          const stats = {};
-          for (const course of coursesList) {
-            try {
-              const response = await fetch(apiUrl(`/api/users/${course.name}`));
-              if (response.ok) {
-                const students = await response.json();
-                stats[course.name] = students.length;
-              } else {
-                stats[course.name] = 0;
-              }
-            } catch (error) {
-              console.error(`Error fetching stats for ${course.name}:`, error);
-              stats[course.name] = 0;
-            }
-          }
-          
-          setCourseStats(stats);
         }
+
+        // Fetch all data in parallel
+        const [
+          studentsRes,
+          transactionsRes,
+          productsRes,
+          vendorsRes,
+          stockEntriesRes
+        ] = await Promise.all([
+          fetch(apiUrl('/api/users')),
+          fetch(apiUrl('/api/transactions')),
+          fetch(apiUrl('/api/products')),
+          fetch(apiUrl('/api/vendors')),
+          fetch(apiUrl('/api/stock-entries'))
+        ]);
+
+        // Process students
+        let totalStudents = 0;
+        const courseStatsMap = {};
+        if (studentsRes.ok) {
+          const students = await studentsRes.json();
+          totalStudents = students.length;
+          students.forEach(student => {
+            const course = student.course;
+            courseStatsMap[course] = (courseStatsMap[course] || 0) + 1;
+          });
+        }
+        setCourseStats(courseStatsMap);
+
+        // Process transactions
+        let totalTransactions = 0;
+        let totalRevenue = 0;
+        let pendingRevenue = 0;
+        let todayTransactions = 0;
+        let todayRevenue = 0;
+        const recent = [];
+        if (transactionsRes.ok) {
+          const transactions = await transactionsRes.json();
+          totalTransactions = transactions.length;
+          
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          transactions.forEach(transaction => {
+            if (transaction.isPaid) {
+              totalRevenue += transaction.totalAmount || 0;
+              } else {
+              pendingRevenue += transaction.totalAmount || 0;
+            }
+
+            const transDate = new Date(transaction.transactionDate);
+            if (transDate >= today) {
+              todayTransactions++;
+              if (transaction.isPaid) {
+                todayRevenue += transaction.totalAmount || 0;
+              }
+            }
+
+            // Get recent 5 transactions
+            if (recent.length < 5) {
+              recent.push(transaction);
+            }
+          });
+          
+          recent.sort((a, b) => new Date(b.transactionDate) - new Date(a.transactionDate));
+          setRecentTransactions(recent.slice(0, 5));
+        }
+
+        // Process products
+        let totalProducts = 0;
+        let totalStockValue = 0;
+        let lowStockItems = 0;
+        if (productsRes.ok) {
+          const products = await productsRes.json();
+          totalProducts = products.length;
+          products.forEach(product => {
+            const stockValue = (product.stock || 0) * (product.price || 0);
+            totalStockValue += stockValue;
+            if ((product.stock || 0) < 10) {
+              lowStockItems++;
+            }
+          });
+        }
+
+        // Process vendors
+        let totalVendors = 0;
+        if (vendorsRes.ok) {
+          const vendors = await vendorsRes.json();
+          totalVendors = vendors.length;
+        }
+
+        setStats({
+          totalStudents,
+          totalTransactions,
+          totalRevenue,
+          pendingRevenue,
+          totalProducts,
+          totalStockValue,
+          lowStockItems,
+          totalVendors,
+          todayTransactions,
+          todayRevenue,
+        });
       } catch (error) {
-        console.error('Error fetching academic config:', error);
+        console.error('Error fetching dashboard data:', error);
       } finally {
         setLoading(false);
       }
@@ -49,172 +152,345 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
-  const getCourseIcon = (index) => {
-    // Array of available icons - cycle through them
-    const icons = ['🎓', '📜', '🎖️', '💼', '💻', '📚', '📖', '🎯', '⭐', '🏆', '📝', '📋', '📊', '🔬', '⚗️', '🧪'];
-    return icons[index % icons.length];
+  const formatCurrency = (amount) => {
+    return `₹${Number(amount || 0).toFixed(2)}`;
   };
 
-  const getCourseColor = (index) => {
-    // Cycle through colors for courses
-    const colors = ['text-primary-500', 'text-cyan-500', 'text-success-500', 'text-purple-500', 'text-orange-500', 'text-pink-500'];
-    return colors[index % colors.length];
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
-
-  const totalStudents = loading ? 0 : Object.values(courseStats).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-8">
-      {/* Header Section */}
-      <div className="text-center mb-8">
-        <div className="mb-4">
-          <span className="text-6xl animate-bounce-gentle">🎓</span>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
+          <p className="text-gray-600">Welcome to Stationery Management System</p>
         </div>
-        <h1 className="text-4xl font-bold text-gray-900 mb-3">College Stationery Management</h1>
-        {/* <p className="text-gray-600 max-w-2xl mx-auto text-lg leading-relaxed">
-          Efficiently manage student records and stationery distribution across all academic programs
-        </p> */}
+
+        {/* Key Statistics Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* Total Students */}
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white shadow-lg hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                <Users size={24} />
+              </div>
+              <TrendingUp size={20} className="opacity-80" />
+            </div>
+            <div className="text-3xl font-bold mb-1">
+              {loading ? (
+                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                stats.totalStudents.toLocaleString()
+              )}
+            </div>
+            <div className="text-blue-100 text-sm font-medium">Total Students</div>
+          </div>
+
+          {/* Total Transactions */}
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white shadow-lg hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                <ShoppingCart size={24} />
+              </div>
+              <Activity size={20} className="opacity-80" />
+            </div>
+            <div className="text-3xl font-bold mb-1">
+              {loading ? (
+                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                stats.totalTransactions.toLocaleString()
+              )}
+            </div>
+            <div className="text-purple-100 text-sm font-medium">Total Transactions</div>
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white rounded-xl p-6 shadow-soft border border-gray-200 text-center hover:shadow-medium transition-all duration-200">
-          <div className="text-3xl font-bold text-primary-500 mb-2">
+          {/* Total Revenue */}
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-lg hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                <DollarSign size={24} />
+              </div>
+              <TrendingUp size={20} className="opacity-80" />
+            </div>
+            <div className="text-3xl font-bold mb-1">
             {loading ? (
-              <div className="inline-block w-6 h-6 border-2 border-primary-200 border-t-primary-500 rounded-full animate-spin"></div>
+                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
             ) : (
-              totalStudents
+                formatCurrency(stats.totalRevenue)
             )}
+            </div>
+            <div className="text-green-100 text-sm font-medium">Total Revenue (Paid)</div>
           </div>
-          <div className="text-sm text-gray-600 font-medium">Total Students</div>
-        </div>
-        <div className="bg-white rounded-xl p-6 shadow-soft border border-gray-200 text-center hover:shadow-medium transition-all duration-200">
-          <div className="text-3xl font-bold text-cyan-500 mb-2">
-            {loading ? (
-              <div className="inline-block w-6 h-6 border-2 border-cyan-200 border-t-cyan-500 rounded-full animate-spin"></div>
-            ) : (
-              courses.length
-            )}
-          </div>
-          <div className="text-sm text-gray-600 font-medium">Active Programs</div>
-        </div>
-        <div className="bg-white rounded-xl p-6 shadow-soft border border-gray-200 text-center hover:shadow-medium transition-all duration-200">
-          <div className="text-3xl font-bold text-success-500 mb-2">100%</div>
-          <div className="text-sm text-gray-600 font-medium">System Status</div>
-        </div>
-      </div>
 
-      {/* Course Cards */}
-      {courses.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-          {courses.map((course, index) => (
-            <div 
-              key={course._id || course.name} 
-              className="bg-white rounded-xl p-6 shadow-soft border border-gray-200 cursor-pointer transition-all duration-200 hover:shadow-medium hover:-translate-y-1 group"
-              onClick={() => navigate(`/course/${course.name}`)}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`text-4xl ${getCourseColor(index)}`}>
-                  {getCourseIcon(index)}
-                </div>
-                <div className="text-gray-400 group-hover:text-primary-500 transition-colors duration-200 text-xl">→</div>
+          {/* Pending Revenue */}
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 text-white shadow-lg hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                <CreditCard size={24} />
+              </div>
+              <TrendingDown size={20} className="opacity-80" />
+        </div>
+            <div className="text-3xl font-bold mb-1">
+            {loading ? (
+                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+            ) : (
+                formatCurrency(stats.pendingRevenue)
+            )}
+            </div>
+            <div className="text-orange-100 text-sm font-medium">Pending Payments</div>
+          </div>
+        </div>
+
+        {/* Secondary Statistics */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* Total Products */}
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Package size={24} className="text-blue-600" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">{course.displayName || course.name.toUpperCase()}</h3>
-                <div className="text-gray-600 mb-2">
-                  {loading ? (
-                    <div className="flex space-x-1">
-                      <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                      <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                    </div>
-                  ) : (
-                    <span className="text-lg font-semibold">
-                      {courseStats[course.name] || 0} {(courseStats[course.name] || 0) === 1 ? 'Student' : 'Students'}
-                    </span>
-                  )}
+                <div className="text-2xl font-bold text-gray-900">
+                  {loading ? '...' : stats.totalProducts}
                 </div>
-                {course.years && course.years.length > 0 && (
-                  <div className="text-xs text-gray-500">
-                    Years: {course.years.sort((a, b) => a - b).join(', ')}
+                <div className="text-sm text-gray-600">Total Products</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Stock Value */}
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <BarChart3 size={24} className="text-green-600" />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">
+                  {loading ? '...' : formatCurrency(stats.totalStockValue)}
+                </div>
+                <div className="text-sm text-gray-600">Stock Value</div>
+              </div>
+        </div>
+      </div>
+
+          {/* Low Stock Alert */}
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+                <AlertCircle size={24} className="text-red-600" />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">
+                  {loading ? '...' : stats.lowStockItems}
+                </div>
+                <div className="text-sm text-gray-600">Low Stock Items</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Total Vendors */}
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                <GraduationCap size={24} className="text-purple-600" />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">
+                  {loading ? '...' : stats.totalVendors}
+                </div>
+                <div className="text-sm text-gray-600">Total Vendors</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Today's Performance & Recent Activity */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Today's Performance */}
+          <div className="lg:col-span-1 bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Calendar size={20} className="text-blue-600" />
+                Today's Performance
+              </h3>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg">
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Transactions</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.todayTransactions}</p>
+                </div>
+                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <ShoppingCart size={24} className="text-blue-600" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">{formatCurrency(stats.todayRevenue)}</p>
+                </div>
+                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                  <DollarSign size={24} className="text-green-600" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Recent Transactions */}
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Activity size={20} className="text-purple-600" />
+                Recent Transactions
+              </h3>
+              <button
+                onClick={() => navigate('/transactions')}
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+              >
+                View All
+                <ArrowRight size={14} />
+              </button>
+            </div>
+            <div className="p-6">
+                  {loading ? (
+                <div className="text-center py-8">
+                  <div className="w-8 h-8 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto"></div>
+                </div>
+              ) : recentTransactions.length > 0 ? (
+                <div className="space-y-4">
+                  {recentTransactions.map((transaction) => (
+                    <div
+                      key={transaction._id}
+                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                      onClick={() => navigate('/transactions')}
+                    >
+                      <div className="flex-1">
+                        <p className="font-semibold text-gray-900">{transaction.student?.name || 'N/A'}</p>
+                        <p className="text-sm text-gray-600">
+                          {transaction.student?.course?.toUpperCase()} • {formatDate(transaction.transactionDate)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-gray-900">{formatCurrency(transaction.totalAmount)}</p>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          transaction.isPaid
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {transaction.isPaid ? 'Paid' : 'Unpaid'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <FileText className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                  <p className="text-gray-600">No recent transactions</p>
                   </div>
                 )}
               </div>
             </div>
-          ))}
+        </div>
+
+        {/* Course Overview & Quick Actions */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Course Overview */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <GraduationCap size={20} className="text-blue-600" />
+                Course Overview
+              </h3>
+            </div>
+            <div className="p-6">
+              {courses.length > 0 ? (
+                <div className="space-y-3">
+                  {courses.map((course) => (
+                    <div
+                      key={course._id || course.name}
+                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer group"
+                      onClick={() => navigate(`/course/${course.name}`)}
+                    >
+                      <div>
+                        <p className="font-semibold text-gray-900">
+                          {course.displayName || course.name.toUpperCase()}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          {courseStats[course.name] || 0} Students
+                        </p>
+                      </div>
+                      <ArrowRight size={18} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
+                    </div>
+                  ))}
         </div>
       ) : (
-        !loading && (
-          <div className="bg-white rounded-xl p-8 shadow-soft border border-gray-200 text-center mb-8">
-            <p className="text-gray-600 mb-4">No courses configured yet.</p>
-            <button 
-              className="btn btn-primary"
-              onClick={() => navigate('/courses')}
-            >
-              Add Courses
-            </button>
+                <div className="text-center py-8">
+                  <p className="text-gray-600">No courses configured</p>
+                </div>
+              )}
+            </div>
           </div>
-        )
-      )}
 
-      {/* Action Buttons */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-8">
+          {/* Quick Actions */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Quick Actions</h3>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-2 gap-4">
         <button 
-          className="btn btn-primary btn-lg"
           onClick={() => navigate('/add-student')}
-        >
-          <span className="text-lg">➕</span>
-          Add New Student
-        </button>
-        <button 
-          className="btn btn-outline btn-lg"
-          onClick={() => navigate('/student-management')}
-        >
-          <span className="text-lg">👥</span>
-          Manage Students
-        </button>
-        <button 
-          className="btn btn-secondary btn-lg"
-          onClick={() => navigate('/items')}
-        >
-          <span className="text-lg">📦</span>
-          Manage Products
-        </button>
-      </div>
-
-      {/* Quick Actions */}
-      {courses.length > 0 && (
-        <div className="bg-white rounded-xl p-6 shadow-soft border border-gray-200">
-          <div className="mb-4">
-            <h4 className="text-lg font-semibold text-gray-800">Quick Actions</h4>
-          </div>
-          <div className={`grid grid-cols-1 gap-4 ${
-            courses.length === 1 ? 'sm:grid-cols-1' : 
-            courses.length === 2 ? 'sm:grid-cols-2' : 
-            'sm:grid-cols-3'
-          }`}>
-            {courses.slice(0, 3).map((course, index) => {
-              const colorClasses = [
-                'hover:border-primary-300 hover:bg-primary-50',
-                'hover:border-cyan-300 hover:bg-cyan-50',
-                'hover:border-success-300 hover:bg-success-50'
-              ];
-              return (
-                <button 
-                  key={course._id || course.name}
-                  className={`flex items-center gap-3 p-4 rounded-lg border border-gray-200 ${colorClasses[index % colorClasses.length]} transition-all duration-200 group`}
-                  onClick={() => navigate(`/course/${course.name}`)}
+                  className="flex flex-col items-center justify-center p-4 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors group"
                 >
-                  <span className="text-2xl group-hover:scale-110 transition-transform duration-200">
-                    {getCourseIcon(index)}
-                  </span>
-                  <span className="text-gray-700 font-medium">{course.displayName || course.name} Students</span>
+                  <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <Users size={20} className="text-white" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700">Add Student</span>
+        </button>
+        <button 
+                  onClick={() => navigate('/manage-stock')}
+                  className="flex flex-col items-center justify-center p-4 bg-green-50 rounded-xl hover:bg-green-100 transition-colors group"
+                >
+                  <div className="w-10 h-10 bg-green-600 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <Package size={20} className="text-white" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700">Manage Stock</span>
+        </button>
+        <button 
+                  onClick={() => navigate('/transactions')}
+                  className="flex flex-col items-center justify-center p-4 bg-purple-50 rounded-xl hover:bg-purple-100 transition-colors group"
+                >
+                  <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <ShoppingCart size={20} className="text-white" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700">Transactions</span>
+        </button>
+                <button 
+                  onClick={() => navigate('/student-management')}
+                  className="flex flex-col items-center justify-center p-4 bg-orange-50 rounded-xl hover:bg-orange-100 transition-colors group"
+                >
+                  <div className="w-10 h-10 bg-orange-600 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <Activity size={20} className="text-white" />
+                  </div>
+                  <span className="text-sm font-medium text-gray-700">Manage Students</span>
                 </button>
-              );
-            })}
+              </div>
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };

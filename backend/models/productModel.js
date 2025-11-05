@@ -11,7 +11,9 @@ const productSchema = new mongoose.Schema(
     },
     description: {
       type: String,
-      required: [true, 'Please provide a product description'],
+      maxlength: [250, 'Description cannot exceed 250 characters'],
+      trim: true,
+      default: '',
     },
     price: {
       type: Number,
@@ -29,8 +31,18 @@ const productSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
-    // Which year this product applies to (1,2,3,4). If blank (0), applies to all years
-    // Allow 0 as a special value meaning "applies to all years" so min must be 0
+    // Which years this product applies to (array of years: [1,2,3,4]). Empty array means applies to all years
+    years: {
+      type: [Number],
+      default: [],
+      validate: {
+        validator: function(v) {
+          return v.every(year => year >= 0 && year <= 10);
+        },
+        message: 'Each year must be between 0 and 10'
+      }
+    },
+    // Keep year field for backward compatibility (will be deprecated)
     year: {
       type: Number,
       min: 0,
@@ -52,6 +64,23 @@ const productSchema = new mongoose.Schema(
     imageUrl: {
       type: String,
     },
+    // Remarks for internal/admin notes
+    remarks: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    // Price management fields
+    lastPriceUpdated: {
+      type: Date,
+      default: Date.now,
+    },
+    // Price history log (optional future enhancement)
+    priceHistory: [{
+      price: { type: Number, required: true },
+      updatedAt: { type: Date, default: Date.now },
+      updatedBy: { type: String, default: 'System' },
+    }],
   },
   {
     // Automatically add 'createdAt' and 'updatedAt' fields
@@ -70,6 +99,15 @@ const getProductModel = async (course) => {
     throw error;
   }
 };
+
+// Pre-save middleware to ensure lastPriceUpdated is set on new products
+productSchema.pre('save', function(next) {
+  // If this is a new product and lastPriceUpdated is not set, set it to now
+  if (this.isNew && !this.lastPriceUpdated) {
+    this.lastPriceUpdated = new Date();
+  }
+  next();
+});
 
 // Default model for main database (backward compatibility)
 const Product = mongoose.model('Product', productSchema);

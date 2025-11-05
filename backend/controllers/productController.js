@@ -14,24 +14,35 @@ const createProduct = async (req, res) => {
   } catch (diagErr) {
     console.warn('Could not read Product schema year options:', diagErr);
   }
-  const { name, description, price, category, stock, imageUrl, forCourse, branch, year } = req.body;
-  let parsedYear = year !== undefined && year !== null && year !== '' ? Number(year) : 0;
+  const { name, description, price, stock, imageUrl, forCourse, branch, years, year, remarks } = req.body;
+  // Handle years array - if years is provided, use it; otherwise fallback to year for backward compatibility
+  let parsedYears = [];
+  if (years && Array.isArray(years)) {
+    parsedYears = years.map(y => Number(y)).filter(y => !isNaN(y) && y >= 0 && y <= 10);
+  } else if (year !== undefined && year !== null && year !== '') {
+    const parsedYear = Number(year);
+    if (!isNaN(parsedYear) && parsedYear >= 0 && parsedYear <= 10) {
+      parsedYears = parsedYear === 0 ? [] : [parsedYear]; // 0 means all years (empty array)
+    }
+  }
+  
   // sanitize numeric fields
   const parsedPrice = price !== undefined && price !== null && price !== '' ? Number(price) : 0;
   let parsedStock = stock !== undefined && stock !== null && stock !== '' ? Number(stock) : 0;
-  if (isNaN(parsedYear) || parsedYear < 0) parsedYear = 0;
-  if (parsedYear > 10) parsedYear = 10;
 
     const product = new Product({
       name,
-      description,
+      description: description || '', // Description is optional, can be added later
       price: parsedPrice,
-      category,
+      category: 'Other', // Default category since we're removing it from form
       stock: parsedStock,
       imageUrl,
       forCourse: forCourse || '',
       branch: branch || '',
-      year: parsedYear || 0,
+      years: parsedYears,
+      year: parsedYears.length === 1 ? parsedYears[0] : (parsedYears.length === 0 ? 0 : parsedYears[0]), // Backward compatibility
+      remarks: remarks || '',
+      lastPriceUpdated: new Date(), // Set initial price update date
     });
 
     const createdProduct = await product.save();
@@ -55,7 +66,13 @@ const getProducts = async (req, res) => {
     if (req.query.course) filter.forCourse = req.query.course;
     if (req.query.year) {
       const py = Number(req.query.year);
-      if (!isNaN(py)) filter.year = py;
+      if (!isNaN(py)) {
+        // Support both year field and years array
+        filter.$or = [
+          { year: py },
+          { years: py }
+        ];
+      }
     }
     const products = await Product.find(filter);
     res.status(200).json(products);
@@ -93,18 +110,50 @@ const updateProduct = async (req, res) => {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: 'Product not found' });
 
-  const { name, description, price, category, stock, imageUrl, forCourse, branch, year } = req.body;
-  const parsedYearUpdate = year !== undefined && year !== null && year !== '' ? Number(year) : undefined;
+  const { name, description, price, stock, imageUrl, forCourse, branch, years, year, remarks } = req.body;
+  // Handle years array - if years is provided, use it; otherwise fallback to year for backward compatibility
+  let parsedYears = undefined;
+  if (years !== undefined && Array.isArray(years)) {
+    parsedYears = years.map(y => Number(y)).filter(y => !isNaN(y) && y >= 0 && y <= 10);
+  } else if (year !== undefined && year !== null && year !== '') {
+    const parsedYear = Number(year);
+    if (!isNaN(parsedYear) && parsedYear >= 0 && parsedYear <= 10) {
+      parsedYears = parsedYear === 0 ? [] : [parsedYear];
+    }
+  }
+
+    // Track price change before updating
+    const oldPrice = product.price;
+    const newPrice = price !== undefined && price !== null && price !== '' ? Number(price) : product.price;
+    
+    // If price is being changed, add old price to history and update timestamp
+    if (price !== undefined && price !== null && price !== '' && newPrice !== oldPrice) {
+      // Initialize price history if it doesn't exist
+      if (!product.priceHistory || !Array.isArray(product.priceHistory)) {
+        product.priceHistory = [];
+      }
+      // Add old price to history before updating to new price
+      product.priceHistory.push({
+        price: oldPrice,
+        updatedAt: new Date(),
+        updatedBy: 'System',
+      });
+      // Update timestamp for price change
+      product.lastPriceUpdated = new Date();
+    }
 
     product.name = name ?? product.name;
     product.description = description ?? product.description;
-    product.price = price ?? product.price;
-    product.category = category ?? product.category;
+    product.price = newPrice;
     product.stock = stock ?? product.stock;
     product.imageUrl = imageUrl ?? product.imageUrl;
-  product.forCourse = forCourse ?? product.forCourse;
-  product.branch = branch ?? product.branch;
-  product.year = parsedYearUpdate ?? product.year;
+    product.forCourse = forCourse ?? product.forCourse;
+    product.branch = branch ?? product.branch;
+    if (parsedYears !== undefined) {
+      product.years = parsedYears;
+      product.year = parsedYears.length === 1 ? parsedYears[0] : (parsedYears.length === 0 ? 0 : parsedYears[0]); // Backward compatibility
+    }
+    product.remarks = remarks !== undefined ? remarks : product.remarks;
 
     const updated = await product.save();
     res.json(updated);

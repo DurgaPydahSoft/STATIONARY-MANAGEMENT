@@ -6,6 +6,7 @@ const userRoutes = require('./routes/userRoutes');
 const dotenv = require('dotenv');
 const subAdminRoutes = require('./routes/subAdminRoutes');
 const academicConfigRoutes = require('./routes/academicConfigRoutes');
+const transactionRoutes = require('./routes/transactionRoutes');
 
 dotenv.config();
 
@@ -71,6 +72,8 @@ app.use('/api', userRoutes);
 app.use('/api', subAdminRoutes);
 // Mount academic config routes
 app.use('/api', academicConfigRoutes);
+// Mount transaction routes
+app.use('/api/transactions', transactionRoutes);
 
 // Error handling middleware (must be after all routes)
 app.use((err, req, res, next) => {

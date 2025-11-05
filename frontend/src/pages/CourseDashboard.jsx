@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Edit, Trash2 } from 'lucide-react';
-import StudentReceiptModal from './StudentReceipt.jsx';
 import { apiUrl } from '../utils/api';
 
 const CourseDashboard = ({ products = [] }) => {
@@ -10,37 +9,45 @@ const CourseDashboard = ({ products = [] }) => {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStudent, setSelectedStudent] = useState(null);
   const [yearFilter, setYearFilter] = useState('all');
+  const [config, setConfig] = useState(null);
+  const [courseIndex, setCourseIndex] = useState(0);
 
   useEffect(() => {
-    const fetchStudents = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
-        const response = await fetch(apiUrl(`/api/users/${course}`));
-        if (response.ok) {
-          const data = (await response.json()).map(s => ({...s, id: s._id}));
-          setStudents(data);
+        
+        // Fetch academic config to get course info
+        const configRes = await fetch(apiUrl('/api/config/academic'));
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setConfig(configData);
+          const coursesList = configData.courses || [];
+          const courseIdx = coursesList.findIndex(c => c.name === course);
+          setCourseIndex(courseIdx >= 0 ? courseIdx : 0);
+        }
+        
+        // Fetch students
+        if (course) {
+          const response = await fetch(apiUrl(`/api/users/${course}`));
+          if (response.ok) {
+            const data = (await response.json()).map(s => ({...s, id: s._id}));
+            setStudents(data);
+          }
         }
       } catch (error) {
-        console.error('Error fetching students:', error);
+        console.error('Error fetching data:', error);
       } finally {
         setLoading(false);
       }
     };
 
     if (course) {
-      fetchStudents();
+      fetchData();
     }
   }, [course]);
 
-  // Effect to keep selectedStudent in sync with the main students list
-  useEffect(() => {
-    if (selectedStudent) {
-      const updatedStudent = students.find(s => s.id === selectedStudent.id);
-      setSelectedStudent(updatedStudent || null);
-    }
-  }, [students, selectedStudent]);
 
   const filteredStudents = useMemo(() => {
     return students.filter(student => {
@@ -84,30 +91,21 @@ const CourseDashboard = ({ products = [] }) => {
 
   const yearOptions = Array.from(new Set(students.map(s => s.year))).sort((a, b) => a - b);
 
-  const getCourseIcon = (course) => {
-    switch (course) {
-      case 'b.tech':
-        return '🎓';
-      case 'diploma':
-        return '📜';
-      case 'degree':
-        return '🎖️';
-      default:
-        return '📚';
-    }
+  const getCourseIcon = (index) => {
+    const icons = ['🎓', '📜', '🎖️', '💼', '💻', '📚', '📖', '🎯', '⭐', '🏆', '📝', '📋', '📊', '🔬', '⚗️', '🧪'];
+    return icons[index % icons.length];
   };
 
-  const getCourseColor = (course) => {
-    switch (course) {
-      case 'b.tech':
-        return 'from-blue-500 to-blue-700';
-      case 'diploma':
-        return 'from-blue-500 to-blue-500';
-      case 'degree':
-        return 'from-blue-400 to-cyan-400';
-      default:
-        return 'from-green-400 to-teal-400';
-    }
+  const getCourseColor = (index) => {
+    const colors = [
+      'from-blue-500 to-blue-700',
+      'from-cyan-500 to-cyan-600',
+      'from-green-500 to-green-600',
+      'from-purple-500 to-purple-600',
+      'from-orange-500 to-orange-600',
+      'from-pink-500 to-pink-600'
+    ];
+    return colors[index % colors.length];
   };
 
   const StudentRow = ({ student }) => {
@@ -128,7 +126,7 @@ const CourseDashboard = ({ products = [] }) => {
     return (
       <tr 
         key={student.id} 
-        onClick={() => setSelectedStudent(student)}
+        onClick={() => navigate(`/student/${student.id}`)}
         className="border-b border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer"
       >
         <td className="px-6 py-4 whitespace-nowrap">
@@ -168,15 +166,8 @@ const CourseDashboard = ({ products = [] }) => {
         <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
           <div className="flex gap-2">
             <button 
-              className="flex items-center gap-1 px-3 py-1 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm"
-              onClick={(e) => { e.stopPropagation(); navigate(`/student/${student.id}`); }}
-            >
-              <Edit size={14} />
-              <span className="hidden sm:inline">Edit</span>
-            </button>
-            <button 
               className="flex items-center gap-1 px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
-              onClick={(e) => { e.stopPropagation(); handleDelete(e); }}
+              onClick={(e) => { e.stopPropagation(); handleDelete(); }}
             >
               <Trash2 size={14} />
             </button>
@@ -203,11 +194,13 @@ const CourseDashboard = ({ products = [] }) => {
         {/* Header Section */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-8">
           <div className="flex items-center gap-4 mb-4 lg:mb-0">
-            <div className={`w-12 h-12 bg-gradient-to-r ${getCourseColor(course)} rounded-xl flex items-center justify-center text-white text-2xl`}>
-              {getCourseIcon(course)}
+            <div className={`w-12 h-12 bg-gradient-to-r ${getCourseColor(courseIndex)} rounded-xl flex items-center justify-center text-white text-2xl`}>
+              {getCourseIcon(courseIndex)}
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">{course.toUpperCase()} Students</h1>
+              <h1 className="text-2xl font-bold text-gray-900">
+                {config?.courses?.find(c => c.name === course)?.displayName || course.toUpperCase()} Students
+              </h1>
               <p className="text-gray-600">
                 {students.length} {students.length === 1 ? 'student' : 'students'} enrolled
               </p>
@@ -297,7 +290,7 @@ const CourseDashboard = ({ products = [] }) => {
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Year</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -311,14 +304,6 @@ const CourseDashboard = ({ products = [] }) => {
           )}
         </div>
 
-        {selectedStudent && (
-          <StudentReceiptModal
-            student={selectedStudent}
-            products={products}
-            onClose={() => setSelectedStudent(null)}
-            onItemToggle={handleItemToggle}
-          />
-        )}
       </div>
     </div>
   );

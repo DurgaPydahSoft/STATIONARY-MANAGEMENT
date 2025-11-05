@@ -9,9 +9,10 @@ import AddStudent from './pages/AddStudent';
 import StudentManagement from './pages/StudentManagement';
 import Login from './pages/Login';
 import SubAdminManagement from './pages/SubAdminManagement';
-import ItemsList from './pages/ItemsList';
+import ProductList from './pages/ProductList';
 import HomePage from './pages/HomePage';
 import CourseManagement from './pages/CourseManagement';
+import Transactions from './pages/Transactions';
 import { apiUrl } from './utils/api';
 // import StudentReceiptModal from './pages/StudentReceipt.jsx'; // Not used
 
@@ -91,7 +92,7 @@ function App() {
     fetchProducts();
   }, []);
 
-  // Listen to item category edit/delete events dispatched from ItemsList
+  // Listen to item category edit/delete events dispatched from ProductList
   useEffect(() => {
     const onRemove = (e) => {
       const name = e.detail;
@@ -276,9 +277,10 @@ function App() {
                 />
                 <Route
                   path="/items"
-                  element={<ItemsList itemCategories={itemCategories} addItemCategory={addItemCategory} setItemCategories={setItemCategories} currentCourse={currentCourse} products={products} setProducts={setProducts} />}
+                  element={<ProductList itemCategories={itemCategories} addItemCategory={addItemCategory} setItemCategories={setItemCategories} currentCourse={currentCourse} products={products} setProducts={setProducts} />}
                 />
                 <Route path="/courses" element={<CourseManagement />} />
+                <Route path="/transactions" element={<Transactions />} />
                 {/* <Route
                   path="/student-receipt"
                   element={<Navigate to="/" />} // This route is no longer needed

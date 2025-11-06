@@ -20,6 +20,7 @@ const Transactions = () => {
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [isModalOpening, setIsModalOpening] = useState(false);
   const [students, setStudents] = useState([]);
   const [courses, setCourses] = useState([]);
   const [reportType, setReportType] = useState(''); // 'day-end', 'stock', 'vendor-purchase'
@@ -171,132 +172,225 @@ const Transactions = () => {
       format: 'a4'
     });
 
-    // Header
-    pdf.setFontSize(20);
+    // Header Section
+    pdf.setFontSize(18);
     pdf.setTextColor(30, 58, 138);
-    pdf.text('PYDAH COLLEGE OF ENGINEERING', 105, 20, { align: 'center' });
-    pdf.setFontSize(14);
+    pdf.setFont(undefined, 'bold');
+    pdf.text('PYDAH COLLEGE OF ENGINEERING', 105, 15, { align: 'center' });
+    pdf.setFontSize(12);
     pdf.setTextColor(100, 100, 100);
+    pdf.setFont(undefined, 'normal');
+    pdf.text('Stationery Management System', 105, 22, { align: 'center' });
+    pdf.setFontSize(14);
+    pdf.setTextColor(30, 58, 138);
+    pdf.setFont(undefined, 'bold');
     pdf.text('Day-End Transaction Report', 105, 30, { align: 'center' });
+    
+    // Draw line under header
+    pdf.setDrawColor(200, 200, 200);
+    pdf.line(20, 35, 190, 35);
+    
+    let yPos = 42;
 
-    // Report Info
+    // Report Info Section
     pdf.setFontSize(10);
     pdf.setTextColor(0, 0, 0);
-    let yPos = 40;
+    pdf.setFont(undefined, 'bold');
+    pdf.text('Report Information', 20, yPos);
+    yPos += 6;
+    pdf.setFont(undefined, 'normal');
     
     if (reportFilters.startDate || reportFilters.endDate) {
-      pdf.text(`Date Range: ${reportFilters.startDate || 'All'} to ${reportFilters.endDate || 'All'}`, 20, yPos);
-      yPos += 7;
+      pdf.text(`Date Range: ${reportFilters.startDate || 'All'} to ${reportFilters.endDate || 'All'}`, 25, yPos);
+      yPos += 5;
     }
     if (reportFilters.course) {
-      pdf.text(`Course: ${reportFilters.course.toUpperCase()}`, 20, yPos);
-      yPos += 7;
+      pdf.text(`Course: ${reportFilters.course.toUpperCase()}`, 25, yPos);
+      yPos += 5;
     }
     if (reportFilters.paymentMethod) {
-      pdf.text(`Payment Method: ${reportFilters.paymentMethod.toUpperCase()}`, 20, yPos);
-      yPos += 7;
+      pdf.text(`Payment Method: ${reportFilters.paymentMethod.toUpperCase()}`, 25, yPos);
+      yPos += 5;
     }
     if (reportFilters.isPaid !== '') {
-      pdf.text(`Payment Status: ${reportFilters.isPaid === 'true' ? 'Paid' : 'Unpaid'}`, 20, yPos);
-      yPos += 7;
+      pdf.text(`Payment Status: ${reportFilters.isPaid === 'true' ? 'Paid' : 'Unpaid'}`, 25, yPos);
+      yPos += 5;
     }
-    pdf.text(`Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, 20, yPos);
-    yPos += 10;
+    pdf.text(`Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, 25, yPos);
+    yPos += 8;
 
-    // Summary
+    // Summary Section
     if (reportFilters.includeSummary && transactions.length > 0) {
       const totalAmount = transactions.reduce((sum, t) => sum + (t.totalAmount || 0), 0);
       const paidCount = transactions.filter(t => t.isPaid).length;
       const unpaidCount = transactions.length - paidCount;
+      const paidAmount = transactions.filter(t => t.isPaid).reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+      const unpaidAmount = transactions.filter(t => !t.isPaid).reduce((sum, t) => sum + (t.totalAmount || 0), 0);
       
-      pdf.setFontSize(12);
+      pdf.setFontSize(11);
       pdf.setFont(undefined, 'bold');
-      pdf.text('Summary', 20, yPos);
+      pdf.setFillColor(240, 240, 240);
+      pdf.rect(20, yPos - 4, 170, 6, 'F');
+      pdf.text('Summary Statistics', 20, yPos);
       yPos += 7;
+      
       pdf.setFont(undefined, 'normal');
-      pdf.setFontSize(10);
+      pdf.setFontSize(9);
       pdf.text(`Total Transactions: ${transactions.length}`, 25, yPos);
-      yPos += 7;
+      yPos += 5;
       pdf.text(`Total Amount: ${formatCurrencyForPDF(totalAmount)}`, 25, yPos);
-      yPos += 7;
-      pdf.text(`Paid: ${paidCount} | Unpaid: ${unpaidCount}`, 25, yPos);
-      yPos += 10;
+      yPos += 5;
+      pdf.text(`Paid Transactions: ${paidCount} (${formatCurrencyForPDF(paidAmount)})`, 25, yPos);
+      yPos += 5;
+      pdf.text(`Unpaid Transactions: ${unpaidCount} (${formatCurrencyForPDF(unpaidAmount)})`, 25, yPos);
+      yPos += 8;
     }
 
-    // Transactions list
+    // Transactions Table Header
     if (transactions.length > 0) {
-      pdf.setFontSize(12);
+      pdf.setFontSize(11);
       pdf.setFont(undefined, 'bold');
-      pdf.text('Transactions', 20, yPos);
+      pdf.setFillColor(240, 240, 240);
+      pdf.rect(20, yPos - 4, 170, 6, 'F');
+      pdf.text('Transaction Details', 20, yPos);
       yPos += 7;
 
+      // Table Headers
+      pdf.setFontSize(8);
+      pdf.setFont(undefined, 'bold');
+      pdf.setFillColor(230, 230, 230);
+      pdf.rect(20, yPos - 3, 170, 5, 'F');
+      pdf.text('Date', 22, yPos);
+      pdf.text('Transaction ID', 45, yPos);
+      pdf.text('Student', 85, yPos);
+      pdf.text('Course', 120, yPos);
+      pdf.text('Amount', 150, yPos);
+      pdf.text('Status', 175, yPos);
+      yPos += 6;
+
+      pdf.setFont(undefined, 'normal');
+      pdf.setFontSize(8);
+
       transactions.forEach((transaction, index) => {
-        if (yPos > 250) {
+        // Check if we need a new page
+        if (yPos > 270) {
           pdf.addPage();
           yPos = 20;
+          // Redraw table headers on new page
+          pdf.setFont(undefined, 'bold');
+          pdf.setFontSize(8);
+          pdf.setFillColor(230, 230, 230);
+          pdf.rect(20, yPos - 3, 170, 5, 'F');
+          pdf.text('Date', 22, yPos);
+          pdf.text('Transaction ID', 45, yPos);
+          pdf.text('Student', 85, yPos);
+          pdf.text('Course', 120, yPos);
+          pdf.text('Amount', 150, yPos);
+          pdf.text('Status', 175, yPos);
+          yPos += 6;
+          pdf.setFont(undefined, 'normal');
         }
 
-        pdf.setFontSize(9);
-        pdf.setFont(undefined, 'bold');
-        pdf.setFillColor(240, 240, 240);
-        pdf.rect(20, yPos - 3, 170, 6, 'F');
-        
         const date = new Date(transaction.transactionDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        const studentName = transaction.student?.name || 'N/A';
-        const course = (transaction.student?.course || 'N/A').toUpperCase();
+        const transactionId = (transaction.transactionId || 'N/A').substring(0, 12);
+        const studentName = (transaction.student?.name || 'N/A').substring(0, 15);
+        const course = (transaction.student?.course || 'N/A').toUpperCase().substring(0, 8);
         const amount = formatCurrencyForPDF(transaction.totalAmount);
-        const method = transaction.paymentMethod === 'cash' ? 'Cash' : 'Online';
         const status = transaction.isPaid ? 'Paid' : 'Unpaid';
 
-        pdf.text(`Date: ${date}`, 22, yPos);
-        pdf.text(`Student: ${studentName}`, 70, yPos);
-        pdf.text(`Course: ${course}`, 130, yPos);
-        yPos += 6;
-        
-        pdf.text(`Amount: ${amount}`, 22, yPos);
-        pdf.text(`Method: ${method}`, 90, yPos);
-        pdf.text(`Status: ${status}`, 140, yPos);
-        yPos += 8;
+        // Alternate row background
+        if (index % 2 === 0) {
+          pdf.setFillColor(250, 250, 250);
+          pdf.rect(20, yPos - 3, 170, 5, 'F');
+        }
 
-        if (reportFilters.includeItems && transaction.items && transaction.items.length > 0) {
-          pdf.setFontSize(8);
-          pdf.setFont(undefined, 'bold');
-          pdf.text('Items:', 22, yPos);
-          yPos += 5;
-          
-          pdf.setFont(undefined, 'normal');
-          pdf.setFontSize(7);
-          
-          transaction.items.forEach((item, itemIndex) => {
-            if (yPos > 270) {
+        pdf.text(date, 22, yPos);
+        pdf.text(transactionId, 45, yPos);
+        pdf.text(studentName, 85, yPos);
+        pdf.text(course, 120, yPos);
+        pdf.text(amount, 150, yPos);
+        pdf.text(status, 175, yPos);
+        yPos += 5;
+
+        // Draw separator line
+        if (index < transactions.length - 1) {
+          pdf.setDrawColor(220, 220, 220);
+          pdf.line(20, yPos, 190, yPos);
+          yPos += 2;
+        }
+      });
+
+      yPos += 5;
+
+      // Item Details Section (if enabled)
+      if (reportFilters.includeItems) {
+        pdf.setFontSize(11);
+        pdf.setFont(undefined, 'bold');
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(20, yPos - 4, 170, 6, 'F');
+        pdf.text('Item Details', 20, yPos);
+        yPos += 7;
+
+        transactions.forEach((transaction, transIndex) => {
+          if (transaction.items && transaction.items.length > 0) {
+            // Check if we need a new page
+            if (yPos > 260) {
               pdf.addPage();
               yPos = 20;
             }
-            
-            const itemName = item.name || 'N/A';
-            const itemQty = item.quantity || 0;
-            const itemTotal = formatCurrencyForPDF(item.total || 0);
-            const itemPrice = formatCurrencyForPDF(item.price || 0);
-            
-            pdf.text(`${itemIndex + 1}. ${itemName}`, 25, yPos);
-            pdf.text(`Qty: ${itemQty}`, 95, yPos);
-            pdf.text(`Price: ${itemPrice}`, 120, yPos);
-            pdf.text(`Total: ${itemTotal}`, 150, yPos);
-            yPos += 5;
-          });
-          
-          yPos += 3;
-        }
 
-        if (index < transactions.length - 1) {
-          pdf.setDrawColor(200, 200, 200);
-          pdf.line(20, yPos, 190, yPos);
-          yPos += 5;
-        }
-      });
+            pdf.setFontSize(9);
+            pdf.setFont(undefined, 'bold');
+            pdf.text(`Transaction: ${transaction.transactionId || 'N/A'}`, 22, yPos);
+            yPos += 5;
+
+            // Item table header
+            pdf.setFontSize(7);
+            pdf.setFont(undefined, 'bold');
+            pdf.setFillColor(245, 245, 245);
+            pdf.rect(25, yPos - 2, 145, 4, 'F');
+            pdf.text('Item Name', 27, yPos);
+            pdf.text('Qty', 100, yPos);
+            pdf.text('Unit Price', 115, yPos);
+            pdf.text('Total', 150, yPos);
+            yPos += 5;
+
+            pdf.setFont(undefined, 'normal');
+            transaction.items.forEach((item, itemIndex) => {
+              if (yPos > 270) {
+                pdf.addPage();
+                yPos = 20;
+              }
+
+              const itemName = (item.name || 'N/A').substring(0, 30);
+              const itemQty = item.quantity || 0;
+              const itemPrice = formatCurrencyForPDF(item.price || 0);
+              const itemTotal = formatCurrencyForPDF(item.total || 0);
+
+              pdf.text(`${itemIndex + 1}. ${itemName}`, 27, yPos);
+              pdf.text(itemQty.toString(), 100, yPos);
+              pdf.text(itemPrice, 115, yPos);
+              pdf.text(itemTotal, 150, yPos);
+              yPos += 4;
+            });
+
+            yPos += 3;
+          }
+        });
+      }
     } else {
       pdf.setFontSize(10);
       pdf.text('No transactions found for the selected filters.', 20, yPos);
+    }
+
+    // Footer
+    const pageCount = pdf.internal.pages.length - 1;
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(8);
+      pdf.setTextColor(150, 150, 150);
+      pdf.text(`Page ${i} of ${pageCount}`, 105, 285, { align: 'center' });
+      pdf.text(`Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, 105, 290, { align: 'center' });
     }
 
     const fileName = `Day_End_Report_${new Date().toISOString().split('T')[0]}.pdf`;
@@ -640,7 +734,13 @@ const Transactions = () => {
             <p className="text-gray-600 mt-1">View and manage all transactions</p>
           </div>
           <button
-            onClick={() => setShowReportModal(true)}
+            onClick={() => {
+              setIsModalOpening(true);
+              setTimeout(() => {
+                setShowReportModal(true);
+                setIsModalOpening(false);
+              }, 200); // 200ms delay
+            }}
             className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all shadow-lg hover:shadow-xl font-medium"
           >
             <FileText size={20} />
@@ -916,7 +1016,7 @@ const Transactions = () => {
 
       {/* Reports Modal */}
       {showReportModal && (
-        <div className="fixed inset-0 backdrop-blur-sm bg-gray-900 bg-opacity-30 flex items-center justify-center z-50 p-4" onClick={() => {
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)' }} onClick={() => {
           setShowReportModal(false);
           setReportType('');
         }}>

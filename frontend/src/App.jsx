@@ -291,7 +291,12 @@ function App() {
                   path="/student/:id"
                   element={
                     <ProtectedRoute currentUser={currentUser} requiredPermissions={["student-management", "student-dashboard", "course-dashboard"]}>
-                      <StudentDetail students={students} setStudents={setStudents} products={products} />
+                      <StudentDetail
+                        students={students}
+                        setStudents={setStudents}
+                        products={products}
+                        setProducts={setProducts}
+                      />
                     </ProtectedRoute>
                   }
                 />

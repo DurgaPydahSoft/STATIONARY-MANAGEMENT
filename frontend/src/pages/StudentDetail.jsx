@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, User, Package, Receipt, History, Calendar, DollarSign, Printer, Lock } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import StudentReceiptModal from './StudentReceipt.jsx';
 import { apiUrl } from '../utils/api';
 
-const StudentDetail = ({ students = [], setStudents, products = [] }) => {
+const StudentDetail = ({ students = [], setStudents, products = [], setProducts }) => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [student, setStudent] = useState(null);
@@ -19,6 +19,18 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
     if (!value) return '';
     return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
   };
+
+  const refreshProducts = useCallback(async () => {
+    if (typeof setProducts !== 'function') return;
+    try {
+      const res = await fetch(apiUrl('/api/products'));
+      if (!res.ok) return;
+      const data = await res.json();
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.warn('Failed to refresh products after transaction:', error);
+    }
+  }, [setProducts]);
 
   useEffect(() => {
     const s = students.find(s => String(s.id) === String(id));
@@ -581,6 +593,7 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
             // Refresh transactions after saving - but keep modal open
             fetchStudentTransactions();
           }}
+          onProductsUpdated={refreshProducts}
         />
       )}
     </div>

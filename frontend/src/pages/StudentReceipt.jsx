@@ -10,7 +10,7 @@ const normalizeValue = (value) => {
   return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 };
 
-const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, onTransactionSaved }) => {
+const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, onTransactionSaved, onProductsUpdated }) => {
   const receiptRef = useRef(null);
   const [selectedItems, setSelectedItems] = useState({});
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -284,6 +284,14 @@ const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, 
       } else {
         if (onTransactionSaved) {
           onTransactionSaved({ ...locallyUpdatedStudent, id: studentId });
+        }
+      }
+
+      if (onProductsUpdated) {
+        try {
+          await onProductsUpdated();
+        } catch (err) {
+          console.warn('Failed to refresh products after transaction:', err);
         }
       }
 

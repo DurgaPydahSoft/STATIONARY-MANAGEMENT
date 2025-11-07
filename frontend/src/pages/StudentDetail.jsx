@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, BookOpen, CreditCard, Package, Receipt, History, Calendar, DollarSign, Printer } from 'lucide-react';
+import { ArrowLeft, User, Package, Receipt, History, Calendar, DollarSign, Printer, Lock } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import StudentReceiptModal from './StudentReceipt.jsx';
 import { apiUrl } from '../utils/api';
@@ -12,10 +12,18 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [prefillProducts, setPrefillProducts] = useState([]);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+
+  const normalizeCourse = (value) => {
+    if (!value) return '';
+    return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  };
 
   useEffect(() => {
     const s = students.find(s => String(s.id) === String(id));
     setStudent(s || null);
+    setAvatarFailed(false);
   }, [id, students]);
 
   const fetchStudentTransactions = async () => {
@@ -65,9 +73,12 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
 
 
   // derive visible items for this student's course/year
+  const studentCourseNormalized = normalizeCourse(student?.course);
+  const avatarUrl = student?.avatarUrl || student?.profileImage || student?.photoUrl || student?.photo || '';
+
   const visibleItems = (products || []).filter(p => {
     // Course filter: if product has forCourse, it must match student's course
-    if (p.forCourse && p.forCourse !== student.course) return false;
+    if (p.forCourse && normalizeCourse(p.forCourse) !== studentCourseNormalized) return false;
     
     // Year filter: check both years (array) and year (single value) for backward compatibility
     const productYears = p.years || (p.year ? [p.year] : []);
@@ -81,144 +92,225 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
     return true;
   });
 
-  // Filter to show only allocated items (items that the student has received)
-  const allocatedItems = visibleItems.filter(p => {
-    const key = p.name.toLowerCase().replace(/\s+/g, '_');
-    return Boolean(student.items && student.items[key]);
+  const isAddOnProduct = (product) => {
+    const courseValue = normalizeCourse(product?.forCourse || '');
+    return courseValue === '';
+  };
+
+  const mappedProducts = visibleItems.filter((product) => !isAddOnProduct(product));
+  const addOnProducts = visibleItems.filter(isAddOnProduct);
+
+  const relevantItems = mappedProducts.map((product) => {
+    const key = product.name?.toLowerCase().replace(/\s+/g, '_');
+    const received = Boolean(student.items && key && student.items[key]);
+    return {
+      product,
+      received,
+      key,
+    };
   });
 
+  const receivedCount = relevantItems.filter(item => item.received).length;
+
+  const pendingItems = relevantItems.filter(({ received }) => !received);
+  const issuedItems = relevantItems.filter(({ received }) => received);
+
+  const handleOpenTransaction = (products = []) => {
+    setPrefillProducts(products);
+    setShowTransactionModal(true);
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 py-8 px-4">
+      <div className="mx-auto space-y-6">
         {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
-              <button 
-                onClick={() => navigate(-1)}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors shadow-sm"
-              >
-                <ArrowLeft size={16} />
-                Back
-              </button>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Student Details</h1>
-              </div>
+        <header className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white rounded-2xl shadow-xl p-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-blue-100">Student Profile</p>
+              <h1 className="text-2xl font-semibold text-blue-100">{student.name}</h1>
+              <p className="text-sm text-blue-100/80 mt-1">{student.course?.toUpperCase()} • Year {student.year}{student.branch ? ` • ${student.branch}` : ''}</p>
             </div>
+          </div>
+          <div className="flex items-center gap-3 self-end lg:self-center">
+            <button 
+              onClick={() => navigate(-1)}
+              className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 rounded-xl text-sm font-semibold hover:bg-white/15 transition-colors"
+            >
+              <ArrowLeft size={16} />
+              Back
+            </button>
             <button
-              onClick={() => setShowTransactionModal(true)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all font-semibold shadow-lg hover:shadow-xl transform hover:scale-105"
+              onClick={() => handleOpenTransaction(addOnProducts)}
+              className="flex items-center gap-2 px-5 py-2.5 bg-white text-blue-800 rounded-xl hover:bg-blue-50 transition-all font-semibold shadow-lg"
             >
               <Receipt size={18} />
-              Make Transaction
+              Add-On Items
             </button>
           </div>
-        </div>
+        </header>
 
         {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-4">
           {/* Left Sidebar - Student Info */}
-          <div className="lg:col-span-1">
-            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg p-5">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/20">
-                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                  <User className="w-5 h-5 text-white" />
-                </div>
-                <h3 className="font-semibold text-white">Student Info</h3>
-              </div>
-              
-              {/* Avatar Section */}
-              <div className="flex flex-col items-center mb-6 pb-6 border-b border-white/20">
-                <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg mb-3 backdrop-blur-sm">
-                  {student.name
+          <aside className="bg-white rounded-2xl border border-blue-100 shadow-lg">
+            <div className="px-6 py-5 border-b border-blue-50 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center text-lg font-semibold overflow-hidden border border-blue-200 shadow-sm">
+                {avatarUrl && !avatarFailed ? (
+                  <img
+                    src={avatarUrl}
+                    alt={`${student.name} avatar`}
+                    className="w-full h-full object-cover"
+                    onError={() => setAvatarFailed(true)}
+                  />
+                ) : (
+                  student.name
                     .split(' ')
                     .map(n => n[0])
                     .join('')
                     .toUpperCase()
-                    .slice(0, 2)}
-                </div>
-                <h4 className="text-lg font-bold text-white text-center">{student.name}</h4>
+                    .slice(0, 2)
+                )}
               </div>
-              
-              <div className="space-y-3">
-                <div className="bg-white/20 rounded-lg p-3 backdrop-blur-sm">
-                  <span className="text-xs text-blue-100 font-medium">Student ID</span>
-                  <p className="text-sm font-semibold text-white mt-1">{student.studentId}</p>
+              <div>
+                <h3 className="text-sm font-semibold text-blue-900">Student Snapshot</h3>
+                <p className="text-xs text-blue-500">Key academic details</p>
+              </div>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs text-blue-500 uppercase tracking-wide">Student ID</p>
+                  <p className="text-sm font-medium text-blue-900">{student.studentId}</p>
                 </div>
-                <div className="bg-white/20 rounded-lg p-3 backdrop-blur-sm">
-                  <span className="text-xs text-blue-100 font-medium">Course</span>
-                  <p className="text-sm font-semibold text-white mt-1">{student.course.toUpperCase()}</p>
+                <div className="space-y-1">
+                  <p className="text-xs text-blue-500 uppercase tracking-wide">Course</p>
+                  <p className="text-sm font-medium text-blue-900">{student.course.toUpperCase()}</p>
                 </div>
-                <div className="bg-white/20 rounded-lg p-3 backdrop-blur-sm">
-                  <span className="text-xs text-blue-100 font-medium">Year</span>
-                  <p className="text-sm font-semibold text-white mt-1">Year {student.year}</p>
+                <div className="space-y-1">
+                  <p className="text-xs text-blue-500 uppercase tracking-wide">Year</p>
+                  <p className="text-sm font-medium text-blue-900">Year {student.year}</p>
                 </div>
                 {student.branch && (
-                  <div className="bg-white/20 rounded-lg p-3 backdrop-blur-sm">
-                    <span className="text-xs text-blue-100 font-medium">Branch</span>
-                    <p className="text-sm font-semibold text-white mt-1">{student.branch}</p>
+                  <div className="space-y-1">
+                    <p className="text-xs text-blue-500 uppercase tracking-wide">Branch</p>
+                    <p className="text-sm font-medium text-blue-900">{student.branch}</p>
                   </div>
                 )}
               </div>
             </div>
-          </div>
+          </aside>
 
           {/* Main Content Area */}
-          <div className="lg:col-span-3 space-y-6">
+          <div className="space-y-6">
             {/* Stationery Items Section */}
-            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-5">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/20">
-                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                  <Package className="w-5 h-5 text-white" />
+            <section className="bg-white rounded-2xl border border-blue-100 shadow-lg">
+              <div className="px-6 py-5 border-b border-blue-50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center">
+                    <Package size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-blue-900">Stationery Items</h3>
+                    <p className="text-xs text-blue-500">Mapped kit items and add-ons</p>
+                  </div>
                 </div>
-                <h3 className="font-semibold text-white">Stationery Items</h3>
-                {allocatedItems.length > 0 && (
-                  <span className="ml-auto text-xs text-white bg-white/20 px-3 py-1 rounded-full backdrop-blur-sm">
-                    {allocatedItems.length} {allocatedItems.length === 1 ? 'item' : 'items'}
-                  </span>
-                )}
+                <div className="text-xs text-blue-600 flex items-center gap-3">
+                  <span>Mapped: {relevantItems.length}</span>
+                  <span>Issued: {receivedCount}</span>
+                  <span>Pending: {pendingItems.length}</span>
+                </div>
               </div>
               
-              {allocatedItems.length === 0 ? (
-                <div className="text-center py-8">
-                  <Package className="w-10 h-10 text-white/50 mx-auto mb-2" />
-                  <p className="text-sm text-green-100">No items allocated to this student yet.</p>
+              <div className="px-6 py-5 space-y-6">
+                {relevantItems.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-slate-200 rounded-xl">
+                    <Package className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                    <p className="text-sm text-slate-500">No stationery items are configured for this student's course/year yet.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {allocatedItems.map(p => (
-                    <div 
-                      key={p._id || p.name}
-                      className="p-3 rounded-lg border border-white/30 bg-white/20 hover:bg-white/30 transition-colors backdrop-blur-sm"
-                    >
-                      <div className="flex items-start gap-2">
-                        <Package className="w-4 h-4 text-white flex-shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <h4 className="text-sm font-semibold text-white mb-1">
-                            {p.name}
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-blue-500 uppercase tracking-wider">Pending Allocation</h4>
+                      {pendingItems.length > 0 && (
+                        <button
+                          onClick={() => handleOpenTransaction(pendingItems.map(({ product }) => product))}
+                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-500 transition-colors shadow"
+                        >
+                          <Receipt size={14} />
+                          Make Transaction
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {pendingItems.length === 0 ? (
+                        <p className="text-sm text-blue-600/70">All mapped items have been issued.</p>
+                      ) : (
+                        pendingItems.map(({ product }) => (
+                          <div
+                            key={product._id || product.name}
+                            className="p-4 rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-blue-100"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <h5 className="text-sm font-semibold text-blue-900 line-clamp-1">{product.name}</h5>
+                                {product.description && (
+                                  <p className="text-xs text-blue-700/70 mt-1 line-clamp-2">{product.description}</p>
+                                )}
+                              </div>
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-white px-2 py-1 rounded-full border border-blue-200">
+                                Pending
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {issuedItems.length > 0 && (
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-semibold text-blue-500 uppercase tracking-wider flex items-center gap-2">
+                          <Lock size={12} />
+                          Issued Items (Locked)
                           </h4>
-                          {p.description && (
-                            <p className="text-xs text-green-100 leading-relaxed line-clamp-2">
-                              {p.description}
-                            </p>
-                          )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {issuedItems.map(({ product }) => (
+                            <div
+                              key={`${product._id || product.name}-issued`}
+                              className="p-4 rounded-xl border border-blue-100 bg-blue-50"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <h5 className="text-sm font-semibold text-blue-800 line-clamp-1">{product.name}</h5>
+                                  {product.description && (
+                                    <p className="text-xs text-blue-700/70 mt-1 line-clamp-2">{product.description}</p>
+                                  )}
+                                </div>
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 bg-white px-2 py-1 rounded-full border border-blue-200">
+                                  <Lock size={10} /> Locked
+                                </span>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )}
                 </div>
               )}
             </div>
+            </section>
+
+            {/* Add-on products are accessible via the top “Add-On Items” button */}
 
             {/* Transaction History Section */}
-            <div className="bg-gradient-to-br from-purple-500 to-violet-600 rounded-xl shadow-lg p-5">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/20">
-                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                  <History className="w-5 h-5 text-white" />
+            <div className="bg-white rounded-2xl border border-blue-100 shadow-lg p-5">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-blue-50">
+                <div className="w-8 h-8 bg-blue-600/10 text-blue-600 rounded-lg flex items-center justify-center">
+                  <History className="w-5 h-5" />
                 </div>
-                <h3 className="font-semibold text-white">Transaction History</h3>
+                <h3 className="font-semibold text-blue-900">Transaction History</h3>
                 {transactions.length > 0 && (
-                  <span className="ml-auto text-xs text-white bg-white/20 px-3 py-1 rounded-full backdrop-blur-sm">
+                  <span className="ml-auto text-xs text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
                     {transactions.length} {transactions.length === 1 ? 'transaction' : 'transactions'}
                   </span>
                 )}
@@ -226,13 +318,13 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
 
               {loadingTransactions ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                  <span className="ml-3 text-sm text-purple-100">Loading transactions...</span>
+                  <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+                  <span className="ml-3 text-sm text-blue-600">Loading transactions...</span>
                 </div>
               ) : transactions.length === 0 ? (
                 <div className="text-center py-12">
-                  <History className="w-10 h-10 text-white/50 mx-auto mb-2" />
-                  <p className="text-sm text-purple-100">No transactions found for this student.</p>
+                  <History className="w-10 h-10 text-blue-200 mx-auto mb-2" />
+                  <p className="text-sm text-blue-500">No transactions found for this student.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -247,30 +339,30 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
                       return (
                         <div key={transaction._id}>
                           <div
-                            className="border border-white/30 rounded-lg p-4 bg-white/20 hover:bg-white/30 transition-colors backdrop-blur-sm"
+                            className="border border-blue-100 rounded-lg p-4 bg-blue-50/60 hover:bg-blue-50 transition-colors"
                           >
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                  <span className="text-xs font-semibold text-white truncate">
+                                  <span className="text-xs font-semibold text-blue-900 truncate">
                                     {transaction.transactionId}
                                   </span>
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                                     transaction.isPaid
-                                      ? 'bg-green-400/30 text-green-100 border border-green-300/50'
-                                      : 'bg-red-400/30 text-red-100 border border-red-300/50'
+                                      ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                      : 'bg-rose-100 text-rose-700 border border-rose-200'
                                   }`}>
                                     {transaction.isPaid ? 'Paid' : 'Unpaid'}
                                   </span>
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                                     transaction.paymentMethod === 'cash'
-                                      ? 'bg-blue-400/30 text-blue-100 border border-blue-300/50'
-                                      : 'bg-purple-400/30 text-purple-100 border border-purple-300/50'
+                                      ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                                      : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
                                   }`}>
                                     {transaction.paymentMethod === 'cash' ? 'Cash' : 'Online'}
                                   </span>
                                 </div>
-                                <div className="flex items-center gap-3 text-xs text-purple-100">
+                                <div className="flex items-center gap-3 text-xs text-blue-700">
                                   <div className="flex items-center gap-1">
                                     <Calendar size={12} />
                                     <span>
@@ -292,14 +384,14 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
                               <div className="ml-4 flex items-center gap-2">
                                 <button
                                   onClick={() => triggerPrint()}
-                                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors no-print backdrop-blur-sm border border-white/30"
+                                  className="px-3 py-1.5 bg-white text-blue-700 hover:bg-blue-50 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors no-print border border-blue-200"
                                   title="Print Receipt"
                                 >
                                   <Printer size={14} />
                                   Print
                                 </button>
                                 <div className="text-right">
-                                  <div className="flex items-center gap-1 text-base font-bold text-white">
+                                  <div className="flex items-center gap-1 text-base font-bold text-blue-900">
                                     <DollarSign size={16} />
                                     <span>₹{Number(transaction.totalAmount).toFixed(2)}</span>
                                   </div>
@@ -309,13 +401,13 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
 
                             {/* Transaction Items - Collapsible or compact view */}
                             {transaction.items && transaction.items.length > 0 && (
-                              <div className="mt-2 pt-2 border-t border-white/30">
-                                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                              <div className="mt-2 pt-2 border-t border-blue-100">
+                                <div className="flex flex-wrap gap-x-3 gap-y-1 text-blue-800">
                                   {transaction.items.map((item, idx) => (
-                                    <div key={idx} className="text-xs text-purple-100">
-                                      <span className="font-medium text-white">{item.name}</span>
-                                      <span className="text-purple-100"> ×{item.quantity}</span>
-                                      <span className="text-white font-semibold ml-1">
+                                    <div key={idx} className="text-xs">
+                                      <span className="font-medium">{item.name}</span>
+                                      <span className=""> ×{item.quantity}</span>
+                                      <span className="font-semibold ml-1">
                                         ₹{Number(item.total).toFixed(2)}
                                       </span>
                                     </div>
@@ -326,9 +418,9 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
 
                             {/* Remarks */}
                             {transaction.remarks && (
-                              <div className="mt-2 pt-2 border-t border-white/30">
-                                <p className="text-xs text-purple-100">
-                                  <span className="font-medium text-white">Remarks:</span> {transaction.remarks}
+                              <div className="mt-2 pt-2 border-t border-blue-100">
+                                <p className="text-xs text-blue-700">
+                                  <span className="font-medium text-blue-900">Remarks:</span> {transaction.remarks}
                                 </p>
                               </div>
                             )}
@@ -478,7 +570,11 @@ const StudentDetail = ({ students = [], setStudents, products = [] }) => {
         <StudentReceiptModal
           student={student}
           products={products}
-          onClose={() => setShowTransactionModal(false)}
+          prefilledItems={prefillProducts}
+          onClose={() => {
+            setShowTransactionModal(false);
+            setPrefillProducts([]);
+          }}
           onTransactionSaved={(updatedStudent) => {
             setStudent(updatedStudent);
             setStudents(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));

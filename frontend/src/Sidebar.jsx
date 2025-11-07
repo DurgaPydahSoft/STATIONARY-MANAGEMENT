@@ -20,17 +20,6 @@ const Sidebar = ({ onLogout, isMobile: isMobileProp, sidebarOpen, setSidebarOpen
     }
   }, [isMobileProp, sidebarOpen, setSidebarOpen]);
 
-  // Auto-close sidebar after 4 seconds when expanded
-  useEffect(() => {
-    if (sidebarOpen) {
-      const timer = setTimeout(() => {
-        setSidebarOpen(false);
-      }, 22000); // 22 seconds
-
-      return () => clearTimeout(timer);
-    }
-  }, [sidebarOpen, setSidebarOpen]);
-
   // Check if current user is super admin
   const isSuperAdmin = currentUser?.role === 'Administrator';
   const isSubAdmin = !isSuperAdmin && currentUser?.role;

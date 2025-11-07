@@ -567,9 +567,13 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                   </div>
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-gray-500">Stock</span>
-                    <span className={`font-semibold ${product.stock > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {product.stock || 0}
-                    </span>
+                    {product.isSet ? (
+                      <span className="font-medium text-purple-600">Derived from items</span>
+                    ) : (
+                      <span className={`font-semibold ${product.stock > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {product.stock || 0}
+                      </span>
+                    )}
                   </div>
                   {product.isSet && (
                     <div className="text-xs text-gray-600">
@@ -651,9 +655,13 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                       <td className="px-6 py-4 text-gray-600">{yearsDisplay}</td>
                       <td className="px-6 py-4 font-semibold text-gray-900">₹{product.price?.toFixed(2) || '0.00'}</td>
                       <td className="px-6 py-4">
-                        <span className={`font-semibold ${product.stock > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {product.stock || 0}
-                        </span>
+                        {product.isSet ? (
+                          <span className="text-sm font-medium text-purple-600">Derived</span>
+                        ) : (
+                          <span className={`font-semibold ${product.stock > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {product.stock || 0}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         {product.isSet ? (
@@ -811,17 +819,29 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Stock</label>
                     {isEditing ? (
-                      <input
-                        type="number"
-                        name="stock"
-                        value={formData.stock}
-                        onChange={handleFormChange}
-                        min="0"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="0"
-                      />
+                      formData.isSet ? (
+                        <p className="text-xs text-gray-600 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                          Set availability is managed by its component items. Update individual item stock from the stock management tab.
+                        </p>
+                      ) : (
+                        <input
+                          type="number"
+                          name="stock"
+                          value={formData.stock}
+                          onChange={handleFormChange}
+                          min="0"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="0"
+                        />
+                      )
                     ) : (
-                      <p className="text-gray-700 bg-gray-50 p-2 rounded-lg">{selectedProduct.stock || 0}</p>
+                      selectedProduct.isSet ? (
+                        <p className="text-xs text-gray-600 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                          Derived from component items
+                        </p>
+                      ) : (
+                        <p className="text-gray-700 bg-gray-50 p-2 rounded-lg">{selectedProduct.stock || 0}</p>
+                      )
                     )}
                   </div>
 

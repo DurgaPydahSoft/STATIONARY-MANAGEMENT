@@ -174,42 +174,32 @@ function App() {
   };
 
   const handleLogin = async (id, password) => {
-    // Static credentials for superadmin login
-    const SUPERADMIN_ID = 'superadmin';
-    const SUPERADMIN_PASSWORD = 'superadmin123';
-
-    if (id === SUPERADMIN_ID && password === SUPERADMIN_PASSWORD) {
-      // On successful static login, set a placeholder user object
-      const userData = {
-        name: 'Super Admin',
-        role: 'Administrator',
-      };
-      setCurrentUser(userData);
-      localStorage.setItem('currentUser', JSON.stringify(userData));
-      setIsAuthenticated(true);
-
-      // ✅ CORRECTION: Navigate to the correct authenticated path for the Dashboard, which is '/'
-      navigate('/');
-
-      return true;
-    }
-    // Try sub-admin login via API
     try {
       const res = await fetch(apiUrl('/api/subadmins/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: id, password }),
       });
-      if (!res.ok) return false;
+
+      if (!res.ok) {
+        return false;
+      }
+
       const data = await res.json();
-      const userData = { name: data.name, role: data.role, id: data._id, permissions: data.permissions || [] };
+      const userData = {
+        name: data.name,
+        role: data.role || 'Editor',
+        id: data._id,
+        permissions: data.permissions || [],
+      };
+
       setCurrentUser(userData);
       localStorage.setItem('currentUser', JSON.stringify(userData));
       setIsAuthenticated(true);
       navigate('/');
       return true;
     } catch (err) {
-      console.error('Sub-admin login failed:', err);
+      console.error('Login failed:', err);
       return false;
     }
   };

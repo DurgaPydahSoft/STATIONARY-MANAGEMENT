@@ -3,6 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, Plus, Trash2, GraduationCap, Users } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 
+const normalizeCourse = (value) => {
+  if (!value) return '';
+  return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+};
+
 const StudentDashboard = () => {
   const navigate = useNavigate();
   const [students, setStudents] = useState([]);
@@ -11,7 +16,6 @@ const StudentDashboard = () => {
   const [yearFilter, setYearFilter] = useState('all');
   const [courseFilter, setCourseFilter] = useState('all');
   const [config, setConfig] = useState(null);
-
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -29,9 +33,14 @@ const StudentDashboard = () => {
 
         if (studentsRes.ok) {
           const data = await studentsRes.json();
-          const formatted = data.map(s => ({ ...s, id: s._id }));
+          const formatted = data.map(s => ({
+            ...s,
+            id: s._id,
+            normalizedCourse: normalizeCourse(s.course),
+          }));
           setStudents(formatted);
         }
+
       } catch (error) {
         console.error('Error fetching students:', error);
       } finally {
@@ -44,7 +53,8 @@ const StudentDashboard = () => {
 
   const getCourseDisplayName = (courseName) => {
     if (!courseName) return 'N/A';
-    const display = config?.courses?.find(c => c.name === courseName)?.displayName;
+    const normalized = normalizeCourse(courseName);
+    const display = config?.courses?.find(c => normalizeCourse(c.name) === normalized)?.displayName;
     return display || courseName.toUpperCase();
   };
 
@@ -53,6 +63,7 @@ const StudentDashboard = () => {
       if (student.id !== studentId) return student;
 
       const updatedStudent = { ...student, ...updateData };
+      updatedStudent.normalizedCourse = normalizeCourse(updatedStudent.course);
 
       const targetCourse = student.course;
       if (targetCourse) {
@@ -104,14 +115,18 @@ const StudentDashboard = () => {
         student.studentId?.toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesYear = yearFilter === 'all' || String(student.year) === String(yearFilter);
-      const matchesCourse = courseFilter === 'all' || student.course === courseFilter;
+      const matchesCourse = courseFilter === 'all' || student.normalizedCourse === courseFilter;
 
       return matchesSearch && matchesYear && matchesCourse;
     });
   }, [students, searchTerm, yearFilter, courseFilter]);
 
   const yearOptions = Array.from(new Set(students.map(s => s.year).filter(Boolean))).sort((a, b) => a - b);
-  const courseOptions = config?.courses || Array.from(new Set(students.map(s => s.course))).map(name => ({ name, displayName: name }));
+  const courseOptions = config?.courses
+    ? config.courses.map(c => ({ name: c.name, displayName: c.displayName }))
+    : Array.from(new Set(students.map(s => s.normalizedCourse)))
+        .filter(Boolean)
+        .map(name => ({ name, displayName: name.toUpperCase() }));
 
   if (loading) {
     return (
@@ -214,7 +229,7 @@ const StudentDashboard = () => {
               <option value="all">All Courses</option>
               {courseOptions?.map(course => (
                 <option key={course.name || course} value={course.name || course}>
-                  {getCourseDisplayName(course.name || course)}
+                  {course.displayName || getCourseDisplayName(course.name)}
                 </option>
               ))}
             </select>
@@ -303,7 +318,7 @@ const StudentDashboard = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
                             {getCourseDisplayName(student.course)}
                           </span>
                         </td>

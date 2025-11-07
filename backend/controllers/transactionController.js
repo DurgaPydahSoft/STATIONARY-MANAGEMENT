@@ -3,6 +3,29 @@ const { User } = require('../models/userModel');
 const { Product } = require('../models/productModel');
 const asyncHandler = require('express-async-handler');
 
+// Helpers for stock management (supports set products)
+const accumulateStockChange = (changeMap, productDoc, delta) => {
+  if (!productDoc) return;
+  const key = productDoc._id.toString();
+  const entry = changeMap.get(key) || { product: productDoc, delta: 0 };
+  entry.delta += delta;
+  changeMap.set(key, entry);
+};
+
+const getProjectedStock = (productDoc, changeMap) => {
+  if (!productDoc) return 0;
+  const key = productDoc._id.toString();
+  const pending = changeMap.has(key) ? changeMap.get(key).delta : 0;
+  return (productDoc.stock ?? 0) + pending;
+};
+
+const applyStockChanges = async (changeMap) => {
+  for (const { product, delta } of changeMap.values()) {
+    product.stock = Math.max(0, (product.stock ?? 0) + delta);
+    await product.save();
+  }
+};
+
 /**
  * @desc    Create a new transaction
  * @route   POST /api/transactions
@@ -26,6 +49,7 @@ const createTransaction = asyncHandler(async (req, res) => {
   // Calculate total and validate items
   let totalAmount = 0;
   const validatedItems = [];
+  const stockChanges = new Map();
 
   for (const item of items) {
     if (!item.productId || !item.quantity || !item.price) {
@@ -33,18 +57,47 @@ const createTransaction = asyncHandler(async (req, res) => {
       throw new Error('Each item must have productId, quantity, and price');
     }
 
-    // Verify product exists
-    const product = await Product.findById(item.productId);
+    // Verify product exists (include set composition data)
+    const product = await Product.findById(item.productId).populate({
+      path: 'setItems.product',
+      select: 'name stock price isSet setItems',
+    });
+
     if (!product) {
       res.status(404);
       throw new Error(`Product not found: ${item.productId}`);
     }
 
-    // Check stock availability
     const requestedQuantity = Number(item.quantity);
-    if (product.stock < requestedQuantity) {
-      res.status(400);
-      throw new Error(`Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${requestedQuantity}`);
+
+    if (product.isSet) {
+      if (!product.setItems || product.setItems.length === 0) {
+        res.status(400);
+        throw new Error(`Set ${product.name} has no component items configured.`);
+      }
+
+      for (const setItem of product.setItems) {
+        const component = setItem.product;
+        if (!component) {
+          res.status(400);
+          throw new Error(`Set ${product.name} contains an invalid item reference.`);
+        }
+
+        const required = requestedQuantity * (Number(setItem.quantity) || 1);
+        if (getProjectedStock(component, stockChanges) < required) {
+          res.status(400);
+          throw new Error(`Insufficient stock for ${component.name} in set ${product.name}. Required: ${required}, Available: ${component.stock}`);
+        }
+
+        accumulateStockChange(stockChanges, component, -required);
+      }
+    } else {
+      if (getProjectedStock(product, stockChanges) < requestedQuantity) {
+        res.status(400);
+        throw new Error(`Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${requestedQuantity}`);
+      }
+
+      accumulateStockChange(stockChanges, product, -requestedQuantity);
     }
 
     const itemTotal = requestedQuantity * Number(item.price);
@@ -59,17 +112,8 @@ const createTransaction = asyncHandler(async (req, res) => {
     });
   }
 
-  // Update product stock after validation
-  for (const item of validatedItems) {
-    const product = await Product.findById(item.productId);
-    if (product) {
-      product.stock -= item.quantity;
-      if (product.stock < 0) {
-        product.stock = 0; // Prevent negative stock
-      }
-      await product.save();
-    }
-  }
+  // Apply stock changes after validation
+  await applyStockChanges(stockChanges);
 
   // Generate unique transaction ID
   const timestamp = Date.now();
@@ -188,17 +232,35 @@ const updateTransaction = asyncHandler(async (req, res) => {
   if (items && Array.isArray(items) && items.length > 0) {
     // First, restore stock from old transaction items
     if (transaction.items && transaction.items.length > 0) {
+      const restoreChanges = new Map();
+
       for (const oldItem of transaction.items) {
-        const product = await Product.findById(oldItem.productId);
-        if (product) {
-          product.stock += oldItem.quantity;
-          await product.save();
+        const product = await Product.findById(oldItem.productId).populate({
+          path: 'setItems.product',
+          select: 'name stock price isSet setItems',
+        });
+
+        if (!product) {
+          continue;
+        }
+
+        if (product.isSet && product.setItems?.length) {
+          for (const setItem of product.setItems) {
+            if (!setItem.product) continue;
+            const restoredQty = oldItem.quantity * (Number(setItem.quantity) || 1);
+            accumulateStockChange(restoreChanges, setItem.product, restoredQty);
+          }
+        } else {
+          accumulateStockChange(restoreChanges, product, oldItem.quantity);
         }
       }
+
+      await applyStockChanges(restoreChanges);
     }
 
     let totalAmount = 0;
     const validatedItems = [];
+    const stockChanges = new Map();
 
     for (const item of items) {
       if (!item.productId || !item.quantity || !item.price) {
@@ -206,17 +268,46 @@ const updateTransaction = asyncHandler(async (req, res) => {
         throw new Error('Each item must have productId, quantity, and price');
       }
 
-      const product = await Product.findById(item.productId);
+      const product = await Product.findById(item.productId).populate({
+        path: 'setItems.product',
+        select: 'name stock price isSet setItems',
+      });
+
       if (!product) {
         res.status(404);
         throw new Error(`Product not found: ${item.productId}`);
       }
 
-      // Check stock availability
       const requestedQuantity = Number(item.quantity);
-      if (product.stock < requestedQuantity) {
-        res.status(400);
-        throw new Error(`Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${requestedQuantity}`);
+
+      if (product.isSet) {
+        if (!product.setItems || product.setItems.length === 0) {
+          res.status(400);
+          throw new Error(`Set ${product.name} has no component items configured.`);
+        }
+
+        for (const setItem of product.setItems) {
+          const component = setItem.product;
+          if (!component) {
+            res.status(400);
+            throw new Error(`Set ${product.name} contains an invalid item reference.`);
+          }
+
+          const required = requestedQuantity * (Number(setItem.quantity) || 1);
+          if (getProjectedStock(component, stockChanges) < required) {
+            res.status(400);
+            throw new Error(`Insufficient stock for ${component.name} in set ${product.name}. Required: ${required}, Available: ${component.stock}`);
+          }
+
+          accumulateStockChange(stockChanges, component, -required);
+        }
+      } else {
+        if (getProjectedStock(product, stockChanges) < requestedQuantity) {
+          res.status(400);
+          throw new Error(`Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${requestedQuantity}`);
+        }
+
+        accumulateStockChange(stockChanges, product, -requestedQuantity);
       }
 
       const itemTotal = requestedQuantity * Number(item.price);
@@ -231,17 +322,7 @@ const updateTransaction = asyncHandler(async (req, res) => {
       });
     }
 
-    // Update product stock after validation
-    for (const item of validatedItems) {
-      const product = await Product.findById(item.productId);
-      if (product) {
-        product.stock -= item.quantity;
-        if (product.stock < 0) {
-          product.stock = 0; // Prevent negative stock
-        }
-        await product.save();
-      }
-    }
+    await applyStockChanges(stockChanges);
 
     transaction.items = validatedItems;
     transaction.totalAmount = totalAmount;
@@ -299,13 +380,28 @@ const deleteTransaction = asyncHandler(async (req, res) => {
 
   // Restore product stock when deleting transaction
   if (transaction.items && transaction.items.length > 0) {
+    const restoreChanges = new Map();
+
     for (const item of transaction.items) {
-      const product = await Product.findById(item.productId);
-      if (product) {
-        product.stock += item.quantity;
-        await product.save();
+      const product = await Product.findById(item.productId).populate({
+        path: 'setItems.product',
+        select: 'name stock price isSet setItems',
+      });
+
+      if (!product) continue;
+
+      if (product.isSet && product.setItems?.length) {
+        for (const setItem of product.setItems) {
+          if (!setItem.product) continue;
+          const restoredQty = item.quantity * (Number(setItem.quantity) || 1);
+          accumulateStockChange(restoreChanges, setItem.product, restoredQty);
+        }
+      } else {
+        accumulateStockChange(restoreChanges, product, item.quantity);
       }
     }
+
+    await applyStockChanges(restoreChanges);
   }
 
   await Transaction.findByIdAndDelete(req.params.id);

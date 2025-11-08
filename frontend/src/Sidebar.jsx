@@ -152,32 +152,39 @@ const Sidebar = ({ onLogout, isMobile: isMobileProp, sidebarOpen, setSidebarOpen
         {/* Footer Section - User Info & Logout */}
         <div className="p-4 border-t border-slate-600 bg-slate-750">
           {/* User Info */}
-          {sidebarOpen && currentUser && (
-            <div className="flex items-center gap-3 mb-4 p-3 bg-slate-700 rounded-xl">
+          {currentUser && (
+            <div className="flex items-center gap-3 p-3 bg-slate-700 border border-slate-600 rounded-xl text-slate-300 text-sm font-medium">
               <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-400 to-blue-600 flex items-center justify-center text-white shadow-md">
                 <User size={20} />
               </div>
-              <div className="flex flex-col leading-tight flex-1 min-w-0">
-                <span className="font-semibold text-sm text-white truncate">{currentUser.name}</span>
-                <span className="text-xs text-slate-300">
-                  {isSuperAdmin ? 'Administrator' : 'Sub-Administrator'}
-                </span>
-              </div>
+              {sidebarOpen && (
+                <div className="flex items-center justify-between gap-3 flex-1 min-w-0">
+                  <div className="flex flex-col leading-tight flex-1 min-w-0">
+                    <span className="font-semibold text-sm truncate">{currentUser.name}</span>
+                    <span className="text-xs text-slate-300">
+                      {isSuperAdmin ? 'Administrator' : 'Sub-Administrator'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={onLogout}
+                    className="p-2 rounded-lg bg-slate-600 hover:bg-red-500 hover:border-red-400 hover:text-white hover:shadow-md transition-all duration-200"
+                    title="Logout"
+                  >
+                    <LogOut size={18} />
+                  </button>
+                </div>
+              )}
+              {!sidebarOpen && (
+                <button
+                  onClick={onLogout}
+                  className="p-2 rounded-lg bg-slate-600 hover:bg-red-500 hover:border-red-400 hover:text-white hover:shadow-md transition-all duration-200"
+                  title="Logout"
+                >
+                  <LogOut size={18} />
+                </button>
+              )}
             </div>
           )}
-          
-          {/* Logout Button */}
-          <button 
-            className={`
-              w-full flex items-center gap-3 px-3 py-3 bg-slate-700 border border-slate-600 rounded-xl text-slate-300 font-medium text-sm cursor-pointer transition-all duration-200 text-left hover:bg-red-500 hover:border-red-400 hover:text-white hover:shadow-md
-              ${!sidebarOpen ? 'justify-center' : ''}
-            `}
-            onClick={onLogout}
-            title={!sidebarOpen ? 'Logout' : ''}
-          >
-            <LogOut size={18} className="flex-shrink-0" />
-            {sidebarOpen && <span>Logout</span>}
-          </button>
         </div>
       </aside>
     </>

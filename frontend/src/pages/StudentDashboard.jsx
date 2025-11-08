@@ -2,20 +2,40 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, Plus, Trash2, GraduationCap, Users } from 'lucide-react';
 import { apiUrl } from '../utils/api';
+import useOnlineStatus from '../hooks/useOnlineStatus';
+import { loadJSON, saveJSON } from '../utils/storage';
 
 const normalizeCourse = (value) => {
   if (!value) return '';
   return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 };
 
-const StudentDashboard = () => {
+const prepareStudents = (source = []) =>
+  (source || []).map((student) => ({
+    ...student,
+    id: student.id || student._id,
+    normalizedCourse: normalizeCourse(student.course),
+  }));
+
+const StudentDashboard = ({ initialStudents = [], isOnline: isOnlineProp }) => {
   const navigate = useNavigate();
-  const [students, setStudents] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState(() => {
+    if (initialStudents && initialStudents.length > 0) return prepareStudents(initialStudents);
+    return prepareStudents(loadJSON('studentsCache', []));
+  });
+  const [loading, setLoading] = useState(students.length === 0);
   const [searchTerm, setSearchTerm] = useState('');
   const [yearFilter, setYearFilter] = useState('all');
   const [courseFilter, setCourseFilter] = useState('all');
-  const [config, setConfig] = useState(null);
+  const [config, setConfig] = useState(() => loadJSON('configCache', null));
+  const isOnline = typeof isOnlineProp === 'boolean' ? isOnlineProp : useOnlineStatus();
+
+  useEffect(() => {
+    if (initialStudents && initialStudents.length > 0) {
+      setStudents(prepareStudents(initialStudents));
+      setLoading(false);
+    }
+  }, [initialStudents]);
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -29,18 +49,15 @@ const StudentDashboard = () => {
         if (configRes.ok) {
           const configData = await configRes.json();
           setConfig(configData);
+          saveJSON('configCache', configData);
         }
 
         if (studentsRes.ok) {
           const data = await studentsRes.json();
-          const formatted = data.map(s => ({
-            ...s,
-            id: s._id,
-            normalizedCourse: normalizeCourse(s.course),
-          }));
+          const formatted = prepareStudents(data);
           setStudents(formatted);
+          saveJSON('studentsCache', formatted);
         }
-
       } catch (error) {
         console.error('Error fetching students:', error);
       } finally {
@@ -48,8 +65,12 @@ const StudentDashboard = () => {
       }
     };
 
-    fetchData();
-  }, []);
+    if (isOnline) {
+      fetchData();
+    } else {
+      setLoading(false);
+    }
+  }, [isOnline]);
 
   const getCourseDisplayName = (courseName) => {
     if (!courseName) return 'N/A';
@@ -127,6 +148,10 @@ const StudentDashboard = () => {
     : Array.from(new Set(students.map(s => s.normalizedCourse)))
         .filter(Boolean)
         .map(name => ({ name, displayName: name.toUpperCase() }));
+
+  useEffect(() => {
+    saveJSON('studentsCache', students);
+  }, [students]);
 
   if (loading) {
     return (

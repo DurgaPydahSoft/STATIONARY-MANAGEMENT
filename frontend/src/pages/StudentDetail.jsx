@@ -1,16 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, User, Package, Receipt, History, Calendar, DollarSign, Printer, Lock } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import StudentReceiptModal from './StudentReceipt.jsx';
 import { apiUrl } from '../utils/api';
 
-const StudentDetail = ({ students = [], setStudents, products = [], setProducts }) => {
+const StudentDetail = ({
+  students = [],
+  setStudents,
+  products = [],
+  setProducts,
+  onQueueTransaction,
+  isOnline,
+  pendingTransactions = [],
+}) => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [student, setStudent] = useState(null);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
-  const [transactions, setTransactions] = useState([]);
+  const [transactions, setTransactions] = useState(() => []);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [prefillProducts, setPrefillProducts] = useState([]);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -40,7 +48,7 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
 
   const fetchStudentTransactions = async () => {
     if (!student || (!student.id && !student._id)) return;
-    
+
     try {
       setLoadingTransactions(true);
       const studentId = student.id || student._id;
@@ -63,26 +71,14 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [student?.id, student?._id]);
 
-  if (!student) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-            <div className="text-6xl mb-4">❓</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-3">Student not found</h2>
-            <p className="text-gray-600 mb-6">Either the student doesn't exist or it hasn't loaded yet.</p>
-            <button 
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              onClick={() => navigate(-1)}
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const currentStudentId = student ? String(student.id || student._id || '') : '';
 
+  useEffect(() => {
+    if (isOnline) {
+      fetchStudentTransactions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline]);
 
   // derive visible items for this student's course/year
   const studentCourseNormalized = normalizeCourse(student?.course);
@@ -91,16 +87,16 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
   const visibleItems = (products || []).filter(p => {
     // Course filter: if product has forCourse, it must match student's course
     if (p.forCourse && normalizeCourse(p.forCourse) !== studentCourseNormalized) return false;
-    
+
     // Year filter: check both years (array) and year (single value) for backward compatibility
     const productYears = p.years || (p.year ? [p.year] : []);
-    
+
     // If product has specific years defined, student's year must be in that array
     if (productYears.length > 0) {
       if (!productYears.includes(Number(student.year))) return false;
     }
     // If product has no years specified (empty array), it applies to all years (for that course)
-    
+
     return true;
   });
 
@@ -132,6 +128,98 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
     setShowTransactionModal(true);
   };
 
+  const pendingTransactionsForStudent = useMemo(() => {
+    if (!currentStudentId) return [];
+    return (pendingTransactions || [])
+      .filter((entry) => String(entry?.payload?.studentId) === currentStudentId)
+      .map((entry) => {
+        const items = entry?.payload?.items || [];
+        const totalAmount = items.reduce((sum, item) => {
+          const total = Number(item?.total);
+          if (Number.isFinite(total)) return sum + total;
+          return sum + Number(item?.price || 0) * Number(item?.quantity || 0);
+        }, 0);
+        return {
+          _id: entry.id,
+          transactionId: `PENDING-${entry.id}`,
+          transactionDate: entry.createdAt || new Date().toISOString(),
+          items,
+          totalAmount,
+          paymentMethod: entry?.payload?.paymentMethod || 'cash',
+          isPaid: Boolean(entry?.payload?.isPaid),
+          remarks: entry?.payload?.remarks || '',
+          isPending: true,
+        };
+      });
+  }, [pendingTransactions, currentStudentId]);
+
+  useEffect(() => {
+    if (!isOnline) return;
+    if (pendingTransactionsForStudent.length === 0 && (student?.id || student?._id)) {
+      fetchStudentTransactions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTransactionsForStudent.length, isOnline]);
+
+  const buildSignature = useCallback((transaction) => {
+    if (!transaction) return '';
+    const items = Array.isArray(transaction.items) ? transaction.items : [];
+    const normalizedItems = items
+      .map((item) => ({
+        name: item?.name || '',
+        quantity: Number(item?.quantity) || 0,
+        total: Number(item?.total) || Number(item?.price || 0) * Number(item?.quantity || 0) || 0,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return JSON.stringify({
+      totalAmount: Number(transaction?.totalAmount) || 0,
+      paymentMethod: transaction?.paymentMethod || '',
+      isPaid: Boolean(transaction?.isPaid),
+      items: normalizedItems,
+    });
+  }, []);
+
+  const displayTransactions = useMemo(() => {
+    const normalizedSource = Array.isArray(transactions) ? transactions : [];
+    const normalized = normalizedSource.map((tx) => ({
+      ...tx,
+      isPending: Boolean(tx.isPending),
+    }));
+
+    const serverSignatures = new Set(normalized.map(buildSignature));
+    const uniquePending = pendingTransactionsForStudent.filter((pending) => {
+      const signature = buildSignature(pending);
+      return !serverSignatures.has(signature);
+    });
+
+    return [...uniquePending, ...normalized].sort((a, b) => {
+      const dateA = new Date(a?.transactionDate || a?.createdAt || 0).getTime();
+      const dateB = new Date(b?.transactionDate || b?.createdAt || 0).getTime();
+      return dateB - dateA;
+    });
+  }, [transactions, pendingTransactionsForStudent, buildSignature]);
+
+  if (!student) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+            <div className="text-6xl mb-4">❓</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">Student not found</h2>
+            <p className="text-gray-600 mb-6">Either the student doesn't exist or it hasn't loaded yet.</p>
+            <button
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              onClick={() => navigate(-1)}
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 py-8 px-4">
       <div className="mx-auto space-y-6">
@@ -145,7 +233,7 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
             </div>
           </div>
           <div className="flex items-center gap-3 self-end lg:self-center">
-            <button 
+            <button
               onClick={() => navigate(-1)}
               className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 rounded-xl text-sm font-semibold hover:bg-white/15 transition-colors"
             >
@@ -233,14 +321,14 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                   <span>Pending: {pendingItems.length}</span>
                 </div>
               </div>
-              
+
               <div className="px-6 py-5 space-y-6">
                 {relevantItems.length === 0 ? (
                   <div className="text-center py-10 border border-dashed border-slate-200 rounded-xl">
                     <Package className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                     <p className="text-sm text-slate-500">No stationery items are configured for this student's course/year yet.</p>
-                </div>
-              ) : (
+                  </div>
+                ) : (
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <h4 className="text-xs font-semibold text-blue-500 uppercase tracking-wider">Pending Allocation</h4>
@@ -284,7 +372,7 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                         <h4 className="text-xs font-semibold text-blue-500 uppercase tracking-wider flex items-center gap-2">
                           <Lock size={12} />
                           Issued Items (Locked)
-                          </h4>
+                        </h4>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {issuedItems.map(({ product }) => (
                             <div
@@ -307,9 +395,9 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                         </div>
                       </div>
                     )}
-                </div>
-              )}
-            </div>
+                  </div>
+                )}
+              </div>
             </section>
 
             {/* Add-on products are accessible via the top “Add-On Items” button */}
@@ -321,9 +409,9 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                   <History className="w-5 h-5" />
                 </div>
                 <h3 className="font-semibold text-blue-900">Transaction History</h3>
-                {transactions.length > 0 && (
+                {displayTransactions.length > 0 && (
                   <span className="ml-auto text-xs text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
-                    {transactions.length} {transactions.length === 1 ? 'transaction' : 'transactions'}
+                    {displayTransactions.length} {displayTransactions.length === 1 ? 'transaction' : 'transactions'}
                   </span>
                 )}
               </div>
@@ -333,14 +421,14 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                   <div className="w-5 h-5 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
                   <span className="ml-3 text-sm text-blue-600">Loading transactions...</span>
                 </div>
-              ) : transactions.length === 0 ? (
+              ) : displayTransactions.length === 0 ? (
                 <div className="text-center py-12">
                   <History className="w-10 h-10 text-blue-200 mx-auto mb-2" />
                   <p className="text-sm text-blue-500">No transactions found for this student.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {transactions.map((transaction) => {
+                  {displayTransactions.map((transaction) => {
                     const TransactionPrintComponent = ({ transaction }) => {
                       const transactionRef = useRef(null);
                       const triggerPrint = useReactToPrint({
@@ -359,18 +447,21 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                                   <span className="text-xs font-semibold text-blue-900 truncate">
                                     {transaction.transactionId}
                                   </span>
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                    transaction.isPaid
+                                  {transaction.isPending && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                                      Sync Pending
+                                    </span>
+                                  )}
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${transaction.isPaid
                                       ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
                                       : 'bg-rose-100 text-rose-700 border border-rose-200'
-                                  }`}>
+                                    }`}>
                                     {transaction.isPaid ? 'Paid' : 'Unpaid'}
                                   </span>
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                    transaction.paymentMethod === 'cash'
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${transaction.paymentMethod === 'cash'
                                       ? 'bg-blue-100 text-blue-700 border border-blue-200'
                                       : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                                  }`}>
+                                    }`}>
                                     {transaction.paymentMethod === 'cash' ? 'Cash' : 'Online'}
                                   </span>
                                 </div>
@@ -378,7 +469,7 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                                   <div className="flex items-center gap-1">
                                     <Calendar size={12} />
                                     <span>
-                                      {new Date(transaction.transactionDate).toLocaleDateString('en-US', {
+                                      {new Date(transaction.transactionDate || transaction.createdAt || Date.now()).toLocaleDateString('en-US', {
                                         month: 'short',
                                         day: 'numeric',
                                         year: 'numeric',
@@ -485,13 +576,13 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                             <div className="print-header">
                               <div style={{ textAlign: 'center', marginBottom: '10px' }}>
                                 <h1 style={{ fontSize: '28px', fontWeight: 'bold', color: '#1e40af', margin: '0 0 5px 0' }}>
-                                  PYDAH COLLEGE OF ENGINEERING
+                                  PYDAH GROUP OF INSTITUTIONS
                                 </h1>
                                 <p style={{ fontSize: '14px', color: '#6b7280', margin: '0' }}>
                                   Stationery Management System
                                 </p>
-            </div>
-          </div>
+                              </div>
+                            </div>
 
                             <div className="print-content">
                               <div style={{ marginBottom: '20px' }}>
@@ -500,17 +591,16 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                                 </h2>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', fontSize: '12px', marginBottom: '20px' }}>
                                   <div>
-                                    <p style={{ margin: '5px 0' }}><strong>Transaction ID:</strong> {transaction.transactionId}</p>
                                     <p style={{ margin: '5px 0' }}><strong>Student Name:</strong> {transaction.student?.name || student.name}</p>
                                     <p style={{ margin: '5px 0' }}><strong>Student ID:</strong> {transaction.student?.studentId || student.studentId}</p>
                                   </div>
                                   <div>
                                     <p style={{ margin: '5px 0' }}><strong>Course:</strong> {transaction.student?.course?.toUpperCase() || student.course.toUpperCase()}</p>
                                     <p style={{ margin: '5px 0' }}><strong>Year:</strong> {transaction.student?.year || student.year}</p>
-                                    <p style={{ margin: '5px 0' }}><strong>Date:</strong> {new Date(transaction.transactionDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                                    {/* <p style={{ margin: '5px 0' }}><strong>Date:</strong> {new Date(transaction.transactionDate || transaction.createdAt || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p> */}
                                   </div>
                                 </div>
-                </div>
+                              </div>
 
                               <table className="print-table">
                                 <thead>
@@ -546,7 +636,7 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                               <div style={{ marginTop: '20px', fontSize: '12px' }}>
                                 <p style={{ margin: '5px 0' }}><strong>Payment Method:</strong> {transaction.paymentMethod === 'cash' ? 'Cash' : 'Online'}</p>
                                 <p style={{ margin: '5px 0' }}>
-                                  <strong>Payment Status:</strong> 
+                                  <strong>Payment Status:</strong>
                                   <span style={{ color: transaction.isPaid ? '#059669' : '#dc2626', fontWeight: '600', marginLeft: '5px' }}>
                                     {transaction.isPaid ? 'Paid' : 'Unpaid'}
                                   </span>
@@ -554,21 +644,21 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
                                 {transaction.remarks && (
                                   <p style={{ margin: '5px 0' }}><strong>Remarks:</strong> {transaction.remarks}</p>
                                 )}
-              </div>
-              
+                              </div>
+
                               <div className="print-footer">
                                 <p style={{ fontSize: '11px', color: '#6b7280', textAlign: 'center', margin: '0' }}>
-                                  Generated on {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} | 
+                                  Generated on {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} |
                                   This is a system generated receipt
                                 </p>
                               </div>
                             </div>
                           </div>
-                </div>
+                        </div>
                       );
                     };
 
-                    return <TransactionPrintComponent key={transaction._id} transaction={transaction} />;
+                    return <TransactionPrintComponent key={transaction._id || transaction.transactionId} transaction={transaction} />;
                   })}
                 </div>
               )}
@@ -583,6 +673,7 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
           student={student}
           products={products}
           prefilledItems={prefillProducts}
+          isOnline={isOnline}
           onClose={() => {
             setShowTransactionModal(false);
             setPrefillProducts([]);
@@ -591,6 +682,14 @@ const StudentDetail = ({ students = [], setStudents, products = [], setProducts 
             setStudent(updatedStudent);
             setStudents(prev => prev.map(s => s.id === updatedStudent.id ? updatedStudent : s));
             // Refresh transactions after saving - but keep modal open
+            fetchStudentTransactions();
+          }}
+          onTransactionQueued={(queuedTransaction, optimisticStudent) => {
+            if (onQueueTransaction) {
+              onQueueTransaction(queuedTransaction, optimisticStudent);
+            }
+            setStudent(optimisticStudent);
+            setStudents(prev => prev.map(s => s.id === optimisticStudent.id ? optimisticStudent : s));
             fetchStudentTransactions();
           }}
           onProductsUpdated={refreshProducts}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
@@ -16,6 +16,8 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import ProtectedRoute from './components/ProtectedRoute';
 import { apiUrl } from './utils/api';
+import useOnlineStatus from './hooks/useOnlineStatus';
+import { loadJSON, saveJSON } from './utils/storage';
 
 const resolveDefaultPath = (user) => {
   if (!user) return '/login';
@@ -54,9 +56,9 @@ const DefaultRoute = ({ currentUser }) => {
 // import StudentReceiptModal from './pages/StudentReceipt.jsx'; // Not used
 
 function App() {
-  const [students, setStudents] = useState([]);
-  const [itemCategories, setItemCategories] = useState([]);
-  const [products, setProducts] = useState([]);
+  const [students, setStudents] = useState(() => loadJSON('studentsCache', []));
+  const [itemCategories, setItemCategories] = useState(() => loadJSON('itemCategoriesCache', []));
+  const [products, setProducts] = useState(() => loadJSON('productsCache', []));
   const [currentCourse, setCurrentCourse] = useState('');
   // Initialize isAuthenticated from localStorage
   const [currentUser, setCurrentUser] = useState(() => {
@@ -66,7 +68,10 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('isAuthenticated'));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [pendingTransactions, setPendingTransactions] = useState(() => loadJSON('pendingTransactions', []));
+  const isOnline = useOnlineStatus();
   const navigate = useNavigate();
+  const processingQueueRef = useRef(false);
 
   // Check for mobile view
   useEffect(() => {
@@ -80,50 +85,133 @@ function App() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  useEffect(() => {
-    const fetchDataForAuthenticatedUser = async () => {
-      // Persist authentication state locally for reloads
-      localStorage.setItem('isAuthenticated', 'true');
+  const fetchStudentsData = useCallback(async () => {
+    if (!isAuthenticated) return;
+    // Persist authentication state locally for reloads
+    localStorage.setItem('isAuthenticated', 'true');
 
-      // We are using a static admin login; skip backend profile check
-      // Attempt to fetch students data but do not log out on failure
-      try {
-        const studentsRes = await fetch(apiUrl('/api/users'));
-        if (studentsRes.ok) {
-          const studentsData = await studentsRes.json();
-          const formattedStudents = studentsData.map(s => ({ ...s, id: s._id }));
-          setStudents(formattedStudents);
-        }
-      } catch (error) {
-        console.warn('Could not fetch students yet:', error);
+    try {
+      const studentsRes = await fetch(apiUrl('/api/users'));
+      if (studentsRes.ok) {
+        const studentsData = await studentsRes.json();
+        const formattedStudents = studentsData.map(s => ({ ...s, id: s._id }));
+        setStudents(formattedStudents);
+        saveJSON('studentsCache', formattedStudents);
       }
-    };
+    } catch (error) {
+      console.warn('Could not fetch students yet:', error);
+    }
+  }, [isAuthenticated]);
 
-    if (isAuthenticated) {
-      fetchDataForAuthenticatedUser();
-    } else {
+  const fetchProductsData = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/api/products'));
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      const data = await res.json();
+      setProducts(data || []);
+      saveJSON('productsCache', data || []);
+    } catch (err) {
+      console.warn('Could not fetch products on app load:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && isOnline) {
+      fetchStudentsData();
+    } else if (!isAuthenticated) {
       // Clear authentication state
       localStorage.removeItem('isAuthenticated');
       setCurrentUser(null);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isOnline, fetchStudentsData]);
 
-  // Fetch global products on app load to populate products and itemCategories
   useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        const res = await fetch(apiUrl('/api/products'));
-        if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-        const data = await res.json();
-        setProducts(data || []);
-        // Normalize product names to be used as item categories
-        const cats = Array.from(new Set((data || []).map(p => p.name.toLowerCase().replace(/\s+/g, '_'))));
-        setItemCategories(cats);
-      } catch (err) {
-        console.warn('Could not fetch products on app load:', err);
+    if (isOnline) {
+      fetchProductsData();
+    }
+  }, [isOnline, fetchProductsData]);
+
+  useEffect(() => {
+    if (!Array.isArray(products)) return;
+    const cats = Array.from(new Set((products || []).map(p => p.name?.toLowerCase().replace(/\s+/g, '_')).filter(Boolean)));
+    setItemCategories(cats);
+    saveJSON('itemCategoriesCache', cats);
+  }, [products]);
+
+  useEffect(() => {
+    if (Array.isArray(students)) {
+      saveJSON('studentsCache', students);
+    }
+  }, [students]);
+
+  useEffect(() => {
+    saveJSON('productsCache', products);
+  }, [products]);
+
+  useEffect(() => {
+    saveJSON('pendingTransactions', pendingTransactions);
+  }, [pendingTransactions]);
+
+  useEffect(() => {
+    if (!isOnline || pendingTransactions.length === 0 || processingQueueRef.current) {
+      return;
+    }
+
+    let isCancelled = false;
+    const processQueue = async () => {
+      processingQueueRef.current = true;
+      const remaining = [];
+      let processedAny = false;
+
+      for (const item of pendingTransactions) {
+        if (isCancelled) break;
+        try {
+          const response = await fetch(apiUrl('/api/transactions'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item.payload),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to sync queued transaction (${response.status})`);
+          }
+
+          processedAny = true;
+        } catch (error) {
+          console.warn('Failed to process queued transaction:', error);
+          remaining.push(item);
+        }
       }
+
+      if (!isCancelled) {
+        setPendingTransactions(remaining);
+        if (processedAny) {
+          await fetchStudentsData();
+          await fetchProductsData();
+        }
+      }
+      processingQueueRef.current = false;
     };
-    fetchProducts();
+
+    processQueue();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOnline, pendingTransactions, fetchStudentsData, fetchProductsData]);
+
+  const queueOfflineTransaction = useCallback((queuedTransaction, optimisticStudent) => {
+    setPendingTransactions(prev => [...prev, queuedTransaction]);
+    if (optimisticStudent) {
+      setStudents(prev => {
+        const exists = prev.some(s => String(s.id) === String(optimisticStudent.id));
+        const updated = exists
+          ? prev.map(s => (String(s.id) === String(optimisticStudent.id) ? optimisticStudent : s))
+          : [...prev, optimisticStudent];
+        saveJSON('studentsCache', updated);
+        return updated;
+      });
+    }
   }, []);
 
   // Listen to item category edit/delete events dispatched from ProductList
@@ -248,7 +336,17 @@ function App() {
   };
 
   return (
-    <div className=" min-h-screen bg-gray-50">
+    <div className={`min-h-screen bg-gray-50 ${!isOnline ? 'pt-16' : ''}`}>
+      {!isOnline && (
+        <div className="fixed top-2 left-0 right-0 z-[60] flex justify-center px-4 pointer-events-none">
+          <div className="bg-red-500 text-white  text-sm font-medium py-2.5 px-4 rounded-full shadow-lg pointer-events-auto flex items-center gap-2 max-w-4xl w-full justify-center">
+            <span className="text-base leading-none">📡</span>
+            <span className="text-center">
+              You’re offline. Showing cached data edits will sync as soon as you reconnect.
+            </span>
+          </div>
+        </div>
+      )}
       {isAuthenticated ? (
         <>
           <Sidebar 
@@ -283,7 +381,10 @@ function App() {
                   path="/students-dashboard"
                   element={
                     <ProtectedRoute currentUser={currentUser} requiredPermissions={["student-dashboard", "course-dashboard"]}>
-                      <StudentDashboard />
+                      <StudentDashboard
+                        initialStudents={students}
+                        isOnline={isOnline}
+                      />
                     </ProtectedRoute>
                   }
                 />
@@ -296,6 +397,9 @@ function App() {
                         setStudents={setStudents}
                         products={products}
                         setProducts={setProducts}
+                        onQueueTransaction={queueOfflineTransaction}
+                        isOnline={isOnline}
+                        pendingTransactions={pendingTransactions}
                       />
                     </ProtectedRoute>
                   }

@@ -4,13 +4,23 @@ import html2canvas from 'html2canvas';
 import { useReactToPrint } from 'react-to-print';
 import jsPDF from 'jspdf';
 import { apiUrl } from '../utils/api';
+import useOnlineStatus from '../hooks/useOnlineStatus';
 
 const normalizeValue = (value) => {
   if (!value) return '';
   return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 };
 
-const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, onTransactionSaved, onProductsUpdated }) => {
+const StudentReceiptModal = ({
+  student,
+  products,
+  prefilledItems = [],
+  onClose,
+  onTransactionSaved,
+  onProductsUpdated,
+  onTransactionQueued,
+  isOnline: isOnlineProp,
+}) => {
   const receiptRef = useRef(null);
   const [selectedItems, setSelectedItems] = useState({});
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -21,9 +31,11 @@ const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, 
   const [savedPaymentInfo, setSavedPaymentInfo] = useState({ paymentMethod: 'cash', isPaid: false, remarks: '', totalAmount: 0 });
   const [statusMsg, setStatusMsg] = useState({ type: '', message: '' });
   const [receiptConfig, setReceiptConfig] = useState({
-    receiptHeader: 'PYDAH COLLEGE OF ENGINEERING',
+    receiptHeader: 'PYDAH GROUP OF INSTITUTIONS',
     receiptSubheader: 'Stationery Management System',
   });
+  const resolvedOnlineStatus = useOnlineStatus();
+  const isOnline = typeof isOnlineProp === 'boolean' ? isOnlineProp : resolvedOnlineStatus;
 
   // Prefill items when prefilledItems prop is provided
   useEffect(() => {
@@ -246,6 +258,44 @@ const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, 
         items: updatedStudentItems,
       };
 
+      if (!isOnline) {
+        const queuedTransaction = {
+          id: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          createdAt: new Date().toISOString(),
+          payload: {
+            studentId,
+            items: transactionItems,
+            paymentMethod,
+            isPaid,
+            remarks,
+          },
+        };
+
+        if (onTransactionQueued) {
+          onTransactionQueued(queuedTransaction, { ...locallyUpdatedStudent, id: studentId });
+        }
+
+        setSavedTransactionItems(transactionItems);
+        setSavedPaymentInfo({
+          paymentMethod,
+          isPaid,
+          remarks,
+          totalAmount,
+        });
+
+        setSelectedItems({});
+        setPaymentMethod('cash');
+        setIsPaid(true);
+        setRemarks('');
+
+        setStatusMsg({ type: 'success', message: 'Offline transaction queued. It will sync when you reconnect.' });
+        setTimeout(() => {
+          setStatusMsg({ type: '', message: '' });
+          onClose();
+        }, 1500);
+        return;
+      }
+
       const response = await fetch(apiUrl('/api/transactions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -263,7 +313,7 @@ const StudentReceiptModal = ({ student, products, prefilledItems = [], onClose, 
         throw new Error(errorData.message || 'Failed to save transaction');
       }
 
-      const savedTransaction = await response.json();
+      await response.json();
       
       // Save transaction data for printing before resetting form
       setSavedTransactionItems(transactionItems);

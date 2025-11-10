@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Home, PlusCircle, Users, List, Settings, LogOut, ChevronLeft, ChevronRight, Menu, UserPlus, X, User, GraduationCap, Receipt } from 'lucide-react';
+import { Home, PlusCircle, Users, List, Settings, LogOut, ChevronLeft, ChevronRight, Menu, UserPlus, X, User, GraduationCap, Receipt, ClipboardList, ClipboardCheck } from 'lucide-react';
 
 const Sidebar = ({ onLogout, isMobile: isMobileProp, sidebarOpen, setSidebarOpen, currentUser }) => {
   const location = useLocation();
@@ -28,13 +28,15 @@ const Sidebar = ({ onLogout, isMobile: isMobileProp, sidebarOpen, setSidebarOpen
   // Map sidebar items with permission keys
   const allMenuItems = [
     { path: '/', label: 'Dashboard', icon: Home, exact: true, permissionKey: 'dashboard' },
-    { path: '/add-student', label: 'Add Student', icon: PlusCircle, permissionKey: 'add-student' },
+    // { path: '/add-student', label: 'Add Student', icon: PlusCircle, permissionKey: 'add-student' },
     { path: '/student-management', label: 'Manage Students', icon: Users, permissionKey: 'student-management' },
     { path: '/students-dashboard', label: 'Student Dashboard', icon: GraduationCap, permissionKey: 'course-dashboard' },
     { path: '/sub-admin-management', label: 'Manage Sub-Admins', icon: UserPlus, superAdminOnly: true },
     { path: '/courses', label: 'Add Courses', icon: GraduationCap, permissionKey: 'courses' },
     { path: '/manage-stock', label: 'Manage Stock', icon: List, permissionKey: 'manage-stock' },
     { path: '/transactions', label: 'Reports', icon: Receipt, permissionKey: 'transactions' },
+    { path: '/student-due', label: 'Student Due', icon: ClipboardList, permissionKey: 'transactions' },
+    { path: '/audit-logs', label: 'Audit Logs', icon: ClipboardCheck, permissionKey: 'manage-stock' },
     { path: '/settings', label: 'Settings', icon: Settings, permissionKey: 'settings' },
   ];
 

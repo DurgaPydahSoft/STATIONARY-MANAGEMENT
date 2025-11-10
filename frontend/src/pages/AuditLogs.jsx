@@ -1,0 +1,776 @@
+import { useEffect, useMemo, useState } from 'react';
+import { ClipboardCheck, ClipboardList, RefreshCcw, CheckCircle2, XCircle, Info, History, Clock } from 'lucide-react';
+import { apiUrl } from '../utils/api';
+
+const getCurrentUserName = () => {
+  try {
+    const saved = localStorage.getItem('currentUser');
+    if (!saved) return 'System';
+    const parsed = JSON.parse(saved);
+    return parsed?.name || 'System';
+  } catch (error) {
+    return 'System';
+  }
+};
+
+const AuditLogs = () => {
+  const [activeTab, setActiveTab] = useState('entry');
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState('');
+  const [entryValues, setEntryValues] = useState({});
+  const [entryStatus, setEntryStatus] = useState({});
+  const [isSubmittingAll, setIsSubmittingAll] = useState(false);
+  const [pendingLogs, setPendingLogs] = useState([]);
+const groupLogsByBatch = (logs = []) => {
+  const groups = new Map();
+  logs.forEach((log) => {
+    const key = log.batchId || log._id;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        batchId: key,
+        status: log.status,
+        createdBy: log.createdBy || 'System',
+        createdAt: log.createdAt,
+        approvedBy: log.approvedBy,
+        approvedAt: log.approvedAt,
+        items: [],
+      });
+    }
+    const group = groups.get(key);
+    group.items.push(log);
+    if (log.status && group.status !== log.status) {
+      group.status = log.status;
+    }
+    if (log.approvedBy) {
+      group.approvedBy = log.approvedBy;
+    }
+    if (log.approvedAt) {
+      group.approvedAt = log.approvedAt;
+    }
+  });
+
+  return Array.from(groups.values()).sort(
+    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+};
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState('');
+  const [approvingId, setApprovingId] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [historyLogs, setHistoryLogs] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+
+  const currentUserName = useMemo(() => getCurrentUserName(), []);
+
+  const fetchProducts = async () => {
+    try {
+      setProductsLoading(true);
+      setProductsError('');
+      const response = await fetch(apiUrl('/api/products'));
+      if (!response.ok) {
+        throw new Error(`Failed to load products (${response.status})`);
+      }
+      const data = await response.json();
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching products for audit logs:', error);
+      setProductsError(error.message || 'Unable to load products');
+    } finally {
+      setProductsLoading(false);
+    }
+  };
+
+  const fetchPendingLogs = async () => {
+    try {
+      setLogsLoading(true);
+      setLogsError('');
+      const response = await fetch(apiUrl('/api/audit-logs?status=pending'));
+      if (!response.ok) {
+        throw new Error(`Failed to load audit logs (${response.status})`);
+      }
+      const data = await response.json();
+      setPendingLogs(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching pending audit logs:', error);
+      setLogsError(error.message || 'Unable to load audit logs');
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const fetchHistoryLogs = async () => {
+    try {
+      setHistoryLoading(true);
+      setHistoryError('');
+      const response = await fetch(apiUrl('/api/audit-logs?status=all'));
+      if (!response.ok) {
+        throw new Error(`Failed to load audit history (${response.status})`);
+      }
+      const data = await response.json();
+      const nonPending = Array.isArray(data) ? data.filter(entry => entry.status !== 'pending') : [];
+      setHistoryLogs(nonPending);
+    } catch (error) {
+      console.error('Error fetching audit history:', error);
+      setHistoryError(error.message || 'Unable to load audit history');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+    fetchPendingLogs();
+    fetchHistoryLogs();
+  }, [refreshKey]);
+
+  useEffect(() => {
+    if (!products?.length) return;
+    setEntryValues(prev => {
+      const next = { ...prev };
+      products.forEach(product => {
+        const existing = next[product._id] || {};
+        if (existing.beforeQuantity === undefined || existing.beforeQuantity === '') {
+          next[product._id] = {
+            beforeQuantity: Number(product.stock ?? 0),
+            afterQuantity: existing.afterQuantity ?? '',
+            notes: existing.notes ?? '',
+          };
+        } else {
+          next[product._id] = {
+            beforeQuantity: existing.beforeQuantity,
+            afterQuantity: existing.afterQuantity ?? '',
+            notes: existing.notes ?? '',
+          };
+        }
+      });
+      return next;
+    });
+  }, [products]);
+
+  const handleEntryChange = (productId, field, value) => {
+    setEntryValues(prev => ({
+      ...prev,
+      [productId]: {
+        ...prev[productId],
+        [field]: value,
+      },
+    }));
+  };
+
+  const submitAuditForProduct = async (product) => {
+    const values = entryValues[product._id] || {};
+    const beforeQuantity = values.beforeQuantity !== undefined && values.beforeQuantity !== ''
+      ? Number(values.beforeQuantity)
+      : Number(product.stock || 0);
+    const afterQuantity = values.afterQuantity !== undefined && values.afterQuantity !== ''
+      ? Number(values.afterQuantity)
+      : null;
+
+    if (!Number.isFinite(beforeQuantity) || beforeQuantity < 0) {
+      setEntryStatus(prev => ({ ...prev, [product._id]: 'error' }));
+      return { success: false, message: 'Invalid before quantity' };
+    }
+
+    if (!Number.isFinite(afterQuantity) || afterQuantity < 0) {
+      setEntryStatus(prev => ({ ...prev, [product._id]: 'error' }));
+      return { success: false, message: 'Invalid after quantity' };
+    }
+
+    try {
+      setEntryStatus(prev => ({ ...prev, [product._id]: 'submitting' }));
+      const response = await fetch(apiUrl('/api/audit-logs'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          productId: product._id,
+          beforeQuantity,
+          afterQuantity,
+          notes: values.notes || '',
+          createdBy: currentUserName,
+          batchId: values.batchId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to submit audit entry');
+      }
+
+      const created = await response.json();
+
+      setEntryValues(prev => ({
+        ...prev,
+        [product._id]: {
+          beforeQuantity: Number(product.stock ?? 0),
+          afterQuantity: '',
+          notes: '',
+        },
+      }));
+
+      setPendingLogs(prev => [created, ...prev]);
+      setEntryStatus(prev => ({ ...prev, [product._id]: 'success' }));
+      return { success: true };
+    } catch (error) {
+      console.error('Error submitting audit log:', error);
+      setEntryStatus(prev => ({ ...prev, [product._id]: 'error' }));
+      return { success: false, message: error.message || 'Submission failed' };
+    }
+  };
+
+  const handleSubmitAll = async () => {
+    if (isSubmittingAll) return;
+    const productsToSubmit = products.filter(product => {
+      const values = entryValues[product._id];
+      return values && values.afterQuantity !== undefined && values.afterQuantity !== '';
+    });
+
+    if (productsToSubmit.length === 0) {
+      alert('Enter an "After Audit" quantity for at least one product before submitting.');
+      return;
+    }
+
+    setIsSubmittingAll(true);
+    const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let successCount = 0;
+    let failureCount = 0;
+
+    for (const product of productsToSubmit) {
+      handleEntryChange(product._id, 'batchId', batchId);
+      const result = await submitAuditForProduct(product);
+      if (result?.success) {
+        successCount += 1;
+      } else {
+        failureCount += 1;
+      }
+    }
+
+    if (successCount > 0) {
+      await fetchPendingLogs();
+      await fetchHistoryLogs();
+      alert(`${successCount} audit entr${successCount === 1 ? 'y' : 'ies'} submitted for approval.`);
+    }
+    if (failureCount > 0) {
+      alert(`${failureCount} audit entr${failureCount === 1 ? 'y' : 'ies'} failed to submit. Check highlighted rows and retry.`);
+    }
+
+    setIsSubmittingAll(false);
+  };
+
+  const processGroupedLogs = async (group, action) => {
+    if (!group?.items?.length) return;
+    const endpoint = action === 'approve' ? 'approve' : 'reject';
+    const reason =
+      action === 'reject'
+        ? window.prompt('Enter a reason for rejection (optional):', '') || ''
+        : '';
+
+    setApprovingId(group.batchId);
+    try {
+      for (const log of group.items) {
+        const response = await fetch(apiUrl(`/api/audit-logs/${log._id}/${endpoint}`), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            approvedBy: currentUserName,
+            notes: reason,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || `Failed to ${action} audit log`);
+        }
+      }
+
+      await fetchPendingLogs();
+      await fetchProducts();
+      await fetchHistoryLogs();
+
+      alert(
+        action === 'approve'
+          ? 'Audit request approved. Stock quantities have been updated.'
+          : 'Audit request rejected.'
+      );
+    } catch (error) {
+      console.error(`Error trying to ${action} audit logs:`, error);
+      alert(error.message || `Unable to ${action} audit logs.`);
+    } finally {
+      setApprovingId('');
+    }
+  };
+
+  const handleApproveGroup = (group) => processGroupedLogs(group, 'approve');
+  const handleRejectGroup = (group) => processGroupedLogs(group, 'reject');
+
+  const handleRefresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
+
+  const pendingGroups = useMemo(() => groupLogsByBatch(pendingLogs), [pendingLogs]);
+  const historyGroups = useMemo(() => groupLogsByBatch(historyLogs), [historyLogs]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-blue-800 rounded-xl flex items-center justify-center shadow-lg">
+              <ClipboardCheck className="text-white" size={24} />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Audit Logs</h1>
+              <p className="text-gray-600 mt-1">
+                Record stock audit entries and approve adjustments to keep your inventory accurate.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 self-start lg:self-auto">
+            <button
+              onClick={handleRefresh}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors shadow-sm"
+            >
+              <RefreshCcw size={16} />
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={() => setActiveTab('entry')}
+              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
+                activeTab === 'entry'
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <ClipboardList size={18} />
+              Audit Log Entry
+            </button>
+            <button
+              onClick={() => setActiveTab('approval')}
+              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
+                activeTab === 'approval'
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <ClipboardCheck size={18} />
+              Audit Approval
+            </button>
+          </div>
+        </div>
+
+        {activeTab === 'entry' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Audit Log Entry</h3>
+                  <p className="text-sm text-gray-500">
+                    Provide the before and after quantities observed during your stock audit.
+                  </p>
+                </div>
+                <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                  {products.length} product{products.length === 1 ? '' : 's'}
+                </span>
+                <button
+                  onClick={handleSubmitAll}
+                  disabled={isSubmittingAll}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isSubmittingAll ? (
+                    <>
+                      <RefreshCcw size={16} className="animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardCheck size={16} />
+                      Submit Audit Entries
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {productsLoading ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <div className="w-8 h-8 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+                  <p className="text-gray-600">Loading products...</p>
+                </div>
+              ) : productsError ? (
+                <div className="p-12 text-center space-y-4">
+                  <Info className="mx-auto text-red-500" size={48} />
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">Unable to load products</h4>
+                    <p className="text-gray-600">{productsError}</p>
+                  </div>
+                  <button
+                    onClick={fetchProducts}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <RefreshCcw size={16} />
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Stock</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Before Audit</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">After Audit</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {products.map(product => {
+                        const values = entryValues[product._id] || {};
+                        const status = entryStatus[product._id];
+                        return (
+                          <tr key={product._id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium text-gray-900">{product.name}</span>
+                                <span className="text-xs text-gray-500">{product.forCourse ? product.forCourse.toUpperCase() : 'All Courses'}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className="text-sm font-semibold text-gray-900">{product.stock ?? 0}</span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <input
+                                type="number"
+                                min="0"
+                                placeholder={String(product.stock ?? 0)}
+                                value={values.beforeQuantity ?? ''}
+                                onChange={(e) => handleEntryChange(product._id, 'beforeQuantity', e.target.value)}
+                                className="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <input
+                                type="number"
+                                min="0"
+                                value={values.afterQuantity ?? ''}
+                                onChange={(e) => handleEntryChange(product._id, 'afterQuantity', e.target.value)}
+                                className="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Qty"
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <textarea
+                                value={values.notes ?? ''}
+                                onChange={(e) => handleEntryChange(product._id, 'notes', e.target.value)}
+                                placeholder="Notes (optional)"
+                                className="w-full min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                                rows={2}
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              {status === 'submitting' && (
+                                <div className="flex items-center gap-2 text-sm text-blue-600">
+                                  <RefreshCcw size={14} className="animate-spin" />
+                                  Submitting...
+                                </div>
+                              )}
+                              {status === 'success' && (
+                                <div className="flex items-center gap-2 text-sm text-green-600">
+                                  <CheckCircle2 size={14} />
+                                  Submitted
+                                </div>
+                              )}
+                              {status === 'error' && (
+                                <div className="flex items-center gap-2 text-sm text-red-600">
+                                  <XCircle size={14} />
+                                  Needs attention
+                                </div>
+                              )}
+                              {!status && (
+                                <div className="text-sm text-gray-400">
+                                  Pending entry
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'approval' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Audit Approval</h3>
+                  <p className="text-sm text-gray-500">
+                    Review submitted audit entries, and approve or reject them to update stock levels.
+                  </p>
+                </div>
+                <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                  {pendingLogs.length} pending entr{pendingLogs.length === 1 ? 'y' : 'ies'}
+                </span>
+              </div>
+
+              {logsLoading ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <div className="w-8 h-8 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+                  <p className="text-gray-600">Loading audit logs...</p>
+                </div>
+              ) : logsError ? (
+                <div className="p-12 text-center space-y-4">
+                  <Info className="mx-auto text-red-500" size={48} />
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">Unable to load audit logs</h4>
+                    <p className="text-gray-600">{logsError}</p>
+                  </div>
+                  <button
+                    onClick={fetchPendingLogs}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <RefreshCcw size={16} />
+                    Retry
+                  </button>
+                </div>
+              ) : pendingGroups.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="text-6xl mb-4">✅</div>
+                  <h4 className="text-xl font-semibold text-gray-900 mb-2">No pending audits!</h4>
+                  <p className="text-gray-600">All submitted audit entries have been reviewed.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-200">
+                  {pendingGroups.map(group => {
+                    const totalDifference = group.items.reduce(
+                      (sum, log) => sum + (Number(log.afterQuantity || 0) - Number(log.beforeQuantity || 0)),
+                      0
+                    );
+                    const totalProducts = group.items.length;
+                    return (
+                      <div key={group.batchId} className="px-6 py-5 hover:bg-gray-50 transition-colors">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">
+                              Submitted by {group.createdBy} on {new Date(group.createdAt).toLocaleString()}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {totalProducts} item{totalProducts === 1 ? '' : 's'} • Total difference: {totalDifference > 0 ? '+' : ''}
+                              {totalDifference}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleApproveGroup(group)}
+                              disabled={approvingId === group.batchId}
+                              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              {approvingId === group.batchId ? (
+                                <>
+                                  <RefreshCcw size={16} className="animate-spin" />
+                                  Approving...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 size={16} />
+                                  Approve Request
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleRejectGroup(group)}
+                              disabled={approvingId === group.batchId}
+                              className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              <XCircle size={16} />
+                              Reject Request
+                            </button>
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto border border-gray-200 rounded-lg bg-white">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Before</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">After</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Difference</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {group.items.map(log => {
+                                const difference = Number(log.afterQuantity || 0) - Number(log.beforeQuantity || 0);
+                                return (
+                                  <tr key={log._id}>
+                                    <td className="px-4 py-2">
+                                      <div className="flex flex-col">
+                                        <span className="font-medium text-gray-900">{log.product?.name || 'N/A'}</span>
+                                        <span className="text-xs text-gray-500">
+                                          Current stock: {log.product?.stock ?? 'N/A'}
+                                        </span>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-2 text-gray-700">{log.beforeQuantity}</td>
+                                    <td className="px-4 py-2 font-semibold text-gray-900">{log.afterQuantity}</td>
+                                    <td className="px-4 py-2">
+                                      <span className={`font-medium ${difference === 0 ? 'text-gray-500' : difference > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        {difference > 0 ? '+' : ''}
+                                        {difference}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2 text-gray-700 whitespace-pre-line">{log.notes || '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <History size={18} />
+                    Audit History
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    View previously approved or rejected audit adjustments.
+                  </p>
+                </div>
+                <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                  {historyGroups.length} request{historyGroups.length === 1 ? '' : 's'}
+                </span>
+              </div>
+
+              {historyLoading ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <div className="w-8 h-8 border-2 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-4"></div>
+                  <p className="text-gray-600">Loading audit history...</p>
+                </div>
+              ) : historyError ? (
+                <div className="p-12 text-center space-y-4">
+                  <Info className="mx-auto text-red-500" size={48} />
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">Unable to load audit history</h4>
+                    <p className="text-gray-600">{historyError}</p>
+                  </div>
+                  <button
+                    onClick={fetchHistoryLogs}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <RefreshCcw size={16} />
+                    Retry
+                  </button>
+                </div>
+              ) : historyGroups.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="text-6xl mb-4">🗂️</div>
+                  <h4 className="text-xl font-semibold text-gray-900 mb-2">No audit history yet</h4>
+                  <p className="text-gray-600">Approved and rejected audit entries will appear here.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-200">
+                  {historyGroups.map(group => {
+                    const totalDifference = group.items.reduce(
+                      (sum, log) => sum + (Number(log.afterQuantity || 0) - Number(log.beforeQuantity || 0)),
+                      0
+                    );
+                    const statusBadge =
+                      group.status === 'approved'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-red-100 text-red-700';
+                    return (
+                      <div key={group.batchId} className="px-6 py-5 hover:bg-gray-50 transition-colors">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadge}`}>
+                                {group.status.charAt(0).toUpperCase() + group.status.slice(1)}
+                              </span>
+                              Reviewed {group.status === 'approved' ? 'by' : 'by'} {group.approvedBy || 'System'}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              Submitted by {group.createdBy} on {new Date(group.createdAt).toLocaleString()}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              Reviewed on {group.approvedAt ? new Date(group.approvedAt).toLocaleString() : '—'}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {group.items.length} item{group.items.length === 1 ? '' : 's'} • Total difference:{' '}
+                              {totalDifference > 0 ? '+' : ''}
+                              {totalDifference}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto border border-gray-200 rounded-lg bg-white">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Before</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">After</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Difference</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {group.items.map(log => {
+                                const difference = Number(log.afterQuantity || 0) - Number(log.beforeQuantity || 0);
+                                return (
+                                  <tr key={log._id}>
+                                    <td className="px-4 py-2">
+                                      <div className="flex flex-col">
+                                        <span className="font-medium text-gray-900">{log.product?.name || 'N/A'}</span>
+                                        <span className="text-xs text-gray-500">
+                                          Stock after review: {log.product?.stock ?? 'N/A'}
+                                        </span>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-2 text-gray-700">{log.beforeQuantity}</td>
+                                    <td className="px-4 py-2 font-semibold text-gray-900">{log.afterQuantity}</td>
+                                    <td className="px-4 py-2">
+                                      <span className={`font-medium ${difference === 0 ? 'text-gray-500' : difference > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        {difference > 0 ? '+' : ''}
+                                        {difference}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2 text-gray-700 whitespace-pre-line">{log.notes || '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default AuditLogs;
+

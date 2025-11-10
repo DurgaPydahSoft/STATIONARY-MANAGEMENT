@@ -18,6 +18,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import { apiUrl } from './utils/api';
 import useOnlineStatus from './hooks/useOnlineStatus';
 import { loadJSON, saveJSON } from './utils/storage';
+import StudentDue from './pages/StudentDue.jsx';
+import AuditLogs from './pages/AuditLogs.jsx';
 
 const resolveDefaultPath = (user) => {
   if (!user) return '/login';
@@ -469,6 +471,22 @@ function App() {
                   element={
                     <ProtectedRoute currentUser={currentUser} requiredPermission="transactions">
                       <Reports />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/student-due" 
+                  element={
+                    <ProtectedRoute currentUser={currentUser} requiredPermission="transactions">
+                      <StudentDue />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="/audit-logs" 
+                  element={
+                    <ProtectedRoute currentUser={currentUser} requiredPermissions={['manage-stock', 'transactions']}>
+                      <AuditLogs />
                     </ProtectedRoute>
                   } 
                 />

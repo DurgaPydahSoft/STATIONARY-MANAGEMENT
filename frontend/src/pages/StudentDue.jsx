@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Eye, Users, ClipboardList, Building2, AlertCircle, Download, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Eye, Users, ClipboardList, Building2, AlertCircle, Download, RefreshCw, ChevronLeft, ChevronRight, X, FileText, Calendar } from 'lucide-react';
 import { apiUrl } from '../utils/api';
+import jsPDF from 'jspdf';
 
 const normalizeValue = (value) => {
   if (!value) return '';
@@ -42,10 +43,38 @@ const StudentDue = () => {
   const [dueFilters, setDueFilters] = useState({ search: '', course: '', year: '', branch: '' });
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportFilters, setReportFilters] = useState({
+    course: '',
+    year: '',
+    branch: '',
+    includeSummary: true,
+    includeItemDetails: false,
+  });
+  const [receiptSettings, setReceiptSettings] = useState({
+    receiptHeader: 'PYDAH GROUP OF INSTITUTIONS',
+    receiptSubheader: 'Stationery Management System',
+  });
 
   useEffect(() => {
     fetchStudents();
     fetchProducts();
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const response = await fetch(apiUrl('/api/settings'));
+      if (response.ok) {
+        const data = await response.json();
+        setReceiptSettings({
+          receiptHeader: data.receiptHeader || 'PYDAH GROUP OF INSTITUTIONS',
+          receiptSubheader: data.receiptSubheader || 'Stationery Management System',
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to load receipt settings:', error.message || error);
+    }
   }, []);
 
   const fetchStudents = useCallback(async () => {
@@ -316,6 +345,253 @@ const StudentDue = () => {
     setCurrentPage(1);
   };
 
+  const formatCurrencyForPDF = (amount) => {
+    return `Rs ${Number(amount || 0).toFixed(2)}`;
+  };
+
+  const handleGenerateReport = () => {
+    // Initialize report filters with current dueFilters
+    setReportFilters({
+      course: dueFilters.course || '',
+      year: dueFilters.year || '',
+      branch: dueFilters.branch || '',
+      includeSummary: true,
+      includeItemDetails: false,
+    });
+    setShowReportModal(true);
+  };
+
+  const handleReportGenerate = async () => {
+    try {
+      // Filter dueStudents based on reportFilters
+      const filteredForReport = dueStudents.filter(record => {
+        const { student } = record;
+        const selectedCourse = normalizeValue(reportFilters.course);
+        const selectedYear = Number(reportFilters.year);
+        const selectedBranch = reportFilters.branch ? normalizeValue(reportFilters.branch) : null;
+
+        if (selectedCourse && normalizeValue(student.course) !== selectedCourse) return false;
+        if (!Number.isNaN(selectedYear) && selectedYear > 0 && Number(student.year) !== selectedYear) return false;
+        if (selectedBranch && normalizeValue(student.branch) !== selectedBranch) return false;
+        return true;
+      });
+
+      // Generate PDF
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      // Header Section
+      pdf.setFontSize(18);
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFont(undefined, 'bold');
+      pdf.text(receiptSettings.receiptHeader, 105, 15, { align: 'center' });
+      pdf.setFontSize(10);
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFont(undefined, 'normal');
+      pdf.text(receiptSettings.receiptSubheader, 105, 22, { align: 'center' });
+      pdf.setFontSize(14);
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFont(undefined, 'bold');
+      pdf.text('Student Due Report', 105, 30, { align: 'center' });
+      
+      // Draw line under header
+      pdf.setDrawColor(200, 200, 200);
+      pdf.line(20, 35, 190, 35);
+      
+      let yPos = 42;
+
+      // Report Info Section
+      pdf.setFontSize(10);
+      pdf.setFont(undefined, 'bold');
+      pdf.text('Report Information', 20, yPos);
+      yPos += 6;
+      pdf.setFont(undefined, 'normal');
+      pdf.setFontSize(9);
+      
+      if (reportFilters.course) {
+        pdf.text(`Course: ${reportFilters.course.toUpperCase()}`, 25, yPos);
+        yPos += 5;
+      }
+      if (reportFilters.year) {
+        pdf.text(`Year: ${reportFilters.year}`, 25, yPos);
+        yPos += 5;
+      }
+      if (reportFilters.branch) {
+        pdf.text(`Branch: ${reportFilters.branch}`, 25, yPos);
+        yPos += 5;
+      }
+      pdf.text(`Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, 25, yPos);
+      yPos += 8;
+
+      // Statistics Section
+      if (reportFilters.includeSummary && filteredForReport.length > 0) {
+        const totalPendingItems = filteredForReport.reduce((sum, record) => sum + record.pendingItems.length, 0);
+        const totalPendingAmount = filteredForReport.reduce((sum, record) => sum + record.pendingValue, 0);
+        const totalIssuedItems = filteredForReport.reduce((sum, record) => sum + record.issuedCount, 0);
+        const totalIssuedAmount = filteredForReport.reduce((sum, record) => sum + record.issuedValue, 0);
+        const impactedCourses = new Set(
+          filteredForReport.map(record => (record.student.course || '').toUpperCase())
+        ).size;
+
+        pdf.setFontSize(11);
+        pdf.setFont(undefined, 'bold');
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(20, yPos - 4, 170, 6, 'F');
+        pdf.text('Summary Statistics', 20, yPos);
+        yPos += 7;
+        
+        pdf.setFont(undefined, 'normal');
+        pdf.setFontSize(9);
+        pdf.text(`Total Students with Pending Items: ${filteredForReport.length}`, 25, yPos);
+        yPos += 5;
+        pdf.text(`Total Pending Items: ${totalPendingItems}`, 25, yPos);
+        yPos += 5;
+        pdf.text(`Total Pending Amount: ${formatCurrencyForPDF(totalPendingAmount)}`, 25, yPos);
+        yPos += 5;
+        pdf.text(`Total Issued Items: ${totalIssuedItems}`, 25, yPos);
+        yPos += 5;
+        pdf.text(`Total Issued Amount: ${formatCurrencyForPDF(totalIssuedAmount)}`, 25, yPos);
+        yPos += 5;
+        pdf.text(`Courses Impacted: ${impactedCourses}`, 25, yPos);
+        yPos += 8;
+      }
+
+      // Student Details Table
+      if (filteredForReport.length > 0) {
+        pdf.setFontSize(11);
+        pdf.setFont(undefined, 'bold');
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(20, yPos - 4, 170, 6, 'F');
+        pdf.text('Student Due Details', 20, yPos);
+        yPos += 7;
+
+        // Table Headers
+        pdf.setFontSize(7);
+        pdf.setFont(undefined, 'bold');
+        pdf.setFillColor(230, 230, 230);
+        pdf.rect(20, yPos - 3, 170, 5, 'F');
+        pdf.text('Student', 22, yPos);
+        pdf.text('Course/Year', 65, yPos);
+        pdf.text('Pending', 100, yPos);
+        pdf.text('Issued', 120, yPos);
+        pdf.text('Progress', 140, yPos);
+        pdf.text('Amount', 165, yPos, { align: 'right' });
+        yPos += 6;
+
+        pdf.setFont(undefined, 'normal');
+        pdf.setFontSize(7);
+
+        filteredForReport.forEach((record, index) => {
+          // Check if we need a new page
+          if (yPos > 270) {
+            pdf.addPage();
+            yPos = 20;
+            // Redraw table headers on new page
+            pdf.setFont(undefined, 'bold');
+            pdf.setFontSize(8);
+            pdf.setFillColor(230, 230, 230);
+            pdf.rect(20, yPos - 3, 170, 5, 'F');
+            pdf.text('Student', 22, yPos);
+            pdf.text('Course/Year', 65, yPos);
+            pdf.text('Pending', 100, yPos);
+            pdf.text('Issued', 120, yPos);
+            pdf.text('Progress', 140, yPos);
+            pdf.text('Amount', 165, yPos, { align: 'right' });
+            yPos += 6;
+            pdf.setFont(undefined, 'normal');
+          }
+
+          const student = record.student;
+          const studentName = (student.name || 'N/A').substring(0, 20);
+          const studentId = (student.studentId || 'N/A').substring(0, 12);
+          const courseYear = `${(student.course || 'N/A').toUpperCase().substring(0, 8)} Y${student.year || 'N/A'}`;
+          const pendingCount = record.pendingItems.length;
+          const issuedCount = record.issuedCount;
+          const totalMapped = record.mappedProducts.length;
+          const completion = totalMapped > 0 ? Math.round((issuedCount / totalMapped) * 100) : 0;
+          const pendingAmount = formatCurrencyForPDF(record.pendingValue);
+
+          // Alternate row background
+          if (index % 2 === 0) {
+            pdf.setFillColor(250, 250, 250);
+            pdf.rect(20, yPos - 3, 170, 8, 'F');
+          }
+
+          pdf.text(`${studentName}`, 22, yPos);
+          pdf.setFontSize(6);
+          pdf.text(`ID: ${studentId}`, 22, yPos + 3.5);
+          pdf.setFontSize(7);
+          pdf.text(courseYear, 65, yPos);
+          if (student.branch) {
+            pdf.setFontSize(6);
+            pdf.text(student.branch.substring(0, 15), 65, yPos + 3.5);
+            pdf.setFontSize(7);
+          }
+          pdf.text(`${pendingCount} items`, 100, yPos);
+          pdf.text(`${issuedCount} items`, 120, yPos);
+          pdf.text(`${completion}%`, 140, yPos);
+          pdf.text(pendingAmount, 165, yPos, { align: 'right' });
+          yPos += 8;
+
+          // Item Details (if enabled)
+          if (reportFilters.includeItemDetails && record.pendingItems.length > 0) {
+            pdf.setFontSize(6);
+            pdf.text('Pending Items:', 25, yPos);
+            yPos += 3.5;
+            
+            record.pendingItems.slice(0, 3).forEach((item, itemIdx) => {
+              const itemName = (item.name || 'N/A').substring(0, 35);
+              pdf.text(`  • ${itemName}`, 25, yPos);
+              yPos += 3.5;
+              if (yPos > 270) {
+                pdf.addPage();
+                yPos = 20;
+              }
+            });
+            
+            if (pendingCount > 3) {
+              pdf.text(`  ... and ${pendingCount - 3} more`, 25, yPos);
+              yPos += 3.5;
+            }
+            yPos += 2;
+          }
+
+          // Draw separator line
+          if (index < filteredForReport.length - 1) {
+            pdf.setDrawColor(220, 220, 220);
+            pdf.line(20, yPos, 190, yPos);
+            yPos += 2;
+          }
+        });
+      } else {
+        pdf.setFontSize(10);
+        pdf.text('No students found with pending items for the selected filters.', 20, yPos);
+      }
+
+      // Footer
+      const pageCount = pdf.internal.pages.length - 1;
+      for (let i = 1; i <= pageCount; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text(`Page ${i} of ${pageCount}`, 105, 285, { align: 'center' });
+        pdf.text(`Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, 105, 290, { align: 'center' });
+      }
+
+      const fileName = `Student_Due_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+      pdf.save(fileName);
+      
+      setShowReportModal(false);
+      alert('PDF report generated successfully!');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Error generating PDF report');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -329,14 +605,23 @@ const StudentDue = () => {
               <p className="text-gray-600 mt-1">Track students who still need their mapped stationery items</p>
             </div>
           </div>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || studentsLoading || productsLoading}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-          >
-            <RefreshCw size={16} className={refreshing || studentsLoading || productsLoading ? 'animate-spin' : ''} />
-            {refreshing || studentsLoading || productsLoading ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleGenerateReport}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all shadow-lg hover:shadow-xl font-medium"
+            >
+              <Download size={20} />
+              Generate Report
+            </button>
+            {/* <button
+              onClick={handleRefresh}
+              disabled={refreshing || studentsLoading || productsLoading}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+            >
+              <RefreshCw size={16} className={refreshing || studentsLoading || productsLoading ? 'animate-spin' : ''} />
+              {refreshing || studentsLoading || productsLoading ? 'Refreshing...' : 'Refresh'}
+            </button> */}
+          </div>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
@@ -683,6 +968,119 @@ const StudentDue = () => {
           )}
         </div>
       </div>
+
+      {/* Report Generation Modal */}
+      {showReportModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)' }} onClick={() => {
+          setShowReportModal(false);
+        }}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+              <h2 className="text-2xl font-bold text-gray-900">Generate Student Due Report</h2>
+              <button
+                onClick={() => setShowReportModal(false)}
+                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-full flex items-center justify-center transition-colors"
+              >
+                <X size={18} className="text-gray-600" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600 mb-4">Configure filters and options for the student due report</p>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Course</label>
+                  <select
+                    value={reportFilters.course}
+                    onChange={(e) => setReportFilters({ ...reportFilters, course: e.target.value, branch: '' })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  >
+                    <option value="">All Courses</option>
+                    {courseOptions.map(course => (
+                      <option key={course} value={course}>{course.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Year</label>
+                  <select
+                    value={reportFilters.year}
+                    onChange={(e) => setReportFilters({ ...reportFilters, year: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  >
+                    <option value="">All Years</option>
+                    {yearOptions.map(year => (
+                      <option key={year} value={String(year)}>{`Year ${year}`}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Branch</label>
+                  <select
+                    value={reportFilters.branch}
+                    onChange={(e) => setReportFilters({ ...reportFilters, branch: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    disabled={!reportFilters.course && branchOptions.length === 0}
+                  >
+                    <option value="">All Branches</option>
+                    {branchOptions.map(branch => (
+                      <option key={branch} value={branch}>{branch}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="pt-4 border-t border-gray-200 space-y-3">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Report Options</h3>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="includeSummary"
+                      checked={reportFilters.includeSummary}
+                      onChange={(e) => setReportFilters({ ...reportFilters, includeSummary: e.target.checked })}
+                      className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                    />
+                    <label htmlFor="includeSummary" className="text-sm font-medium text-gray-700 cursor-pointer">
+                      Include summary statistics
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="includeItemDetails"
+                      checked={reportFilters.includeItemDetails}
+                      onChange={(e) => setReportFilters({ ...reportFilters, includeItemDetails: e.target.checked })}
+                      className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                    />
+                    <label htmlFor="includeItemDetails" className="text-sm font-medium text-gray-700 cursor-pointer">
+                      Include pending item details for each student
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReportGenerate}
+                  className="px-6 py-2 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-700 hover:to-purple-800 transition-all font-medium flex items-center gap-2"
+                >
+                  <Download size={18} />
+                  Generate PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -68,7 +68,7 @@ const StudentDetail = ({
   }, [student]);
 
   useEffect(() => {
-    fetchStudentTransactions();
+      fetchStudentTransactions();
   }, [fetchStudentTransactions]);
 
   const currentStudentId = student ? String(student.id || student._id || '') : '';
@@ -755,8 +755,8 @@ const StudentDetail = ({
                                           >
                                             {item.status === 'partial' ? 'Partial' : 'Fulfilled'}
                                           </span>
-                                        </span>
-                                      </div>
+                                      </span>
+                                    </div>
                                     )}
                                     {item.isSet && item.setComponents?.length > 0 && (
                                       <div className="mt-1 border-t border-blue-100 pt-1">
@@ -812,7 +812,7 @@ const StudentDetail = ({
                                                           'Mark as Taken'
                                                         )}
                                                       </button>
-                                                    </div>
+                                </div>
                                                   )}
                                                 </div>
                                               </li>

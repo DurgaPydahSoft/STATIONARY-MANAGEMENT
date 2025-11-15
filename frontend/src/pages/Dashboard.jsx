@@ -79,21 +79,26 @@ const Dashboard = () => {
           today.setHours(0, 0, 0, 0);
 
           transactions.forEach(transaction => {
-            if (transaction.isPaid) {
-              totalRevenue += transaction.totalAmount || 0;
-              } else {
-              pendingRevenue += transaction.totalAmount || 0;
-            }
-
-            const transDate = new Date(transaction.transactionDate);
-            if (transDate >= today) {
-              todayTransactions++;
+            // Exclude branch transfers from revenue calculations (internal stock movements)
+            const isBranchTransfer = transaction.transactionType === 'branch_transfer';
+            
+            if (!isBranchTransfer) {
               if (transaction.isPaid) {
-                todayRevenue += transaction.totalAmount || 0;
+                totalRevenue += transaction.totalAmount || 0;
+              } else {
+                pendingRevenue += transaction.totalAmount || 0;
+              }
+
+              const transDate = new Date(transaction.transactionDate);
+              if (transDate >= today) {
+                todayTransactions++;
+                if (transaction.isPaid) {
+                  todayRevenue += transaction.totalAmount || 0;
+                }
               }
             }
 
-            // Get recent 5 transactions
+            // Get recent 5 transactions (including branch transfers for display)
             if (recent.length < 5) {
               recent.push(transaction);
             }

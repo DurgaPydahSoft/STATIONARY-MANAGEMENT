@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Trash2, Receipt, Download, Eye, X, FileText, Calendar, Package, Building2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Trash2, Receipt, Download, Eye, X, FileText, Calendar, Package, Building2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 import jsPDF from 'jspdf';
 
@@ -10,6 +10,7 @@ const Reports = () => {
   const [filters, setFilters] = useState({
     course: '',
     studentId: '',
+    transactionType: '',
     paymentMethod: '',
     isPaid: '',
     startDate: '',
@@ -46,7 +47,9 @@ const Reports = () => {
   });
   const [vendors, setVendors] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const [branchTransferPage, setBranchTransferPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   useEffect(() => {
     fetchTransactions();
@@ -88,6 +91,7 @@ const Reports = () => {
       const queryParams = new URLSearchParams();
       if (filters.course) queryParams.append('course', filters.course);
       if (filters.studentId) queryParams.append('studentId', filters.studentId);
+      if (filters.transactionType) queryParams.append('transactionType', filters.transactionType);
       if (filters.paymentMethod) queryParams.append('paymentMethod', filters.paymentMethod);
       if (filters.isPaid !== '') queryParams.append('isPaid', filters.isPaid);
       if (filters.startDate) queryParams.append('startDate', filters.startDate);
@@ -140,23 +144,49 @@ const Reports = () => {
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(transaction => {
+      // Filter by transaction type if selected
+      if (filters.transactionType) {
+        const transType = transaction.transactionType || 'student';
+        if (transType !== filters.transactionType) {
+          return false;
+        }
+      }
+
       const matchesSearch = 
         transaction.transactionId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         transaction.student?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        transaction.student?.studentId?.toLowerCase().includes(searchTerm.toLowerCase());
+        transaction.student?.studentId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        transaction.branchTransfer?.branchName?.toLowerCase().includes(searchTerm.toLowerCase());
       return matchesSearch;
     });
-  }, [transactions, searchTerm]);
+  }, [transactions, searchTerm, filters.transactionType]);
 
-  // Pagination calculations
-  const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+  // Separate student transactions and branch transfers
+  const studentTransactions = useMemo(() => {
+    return filteredTransactions.filter(t => !t.transactionType || t.transactionType === 'student');
+  }, [filteredTransactions]);
+
+  const branchTransfers = useMemo(() => {
+    return filteredTransactions.filter(t => t.transactionType === 'branch_transfer');
+  }, [filteredTransactions]);
+
+  // Pagination for student transactions
+  const studentTotalPages = Math.ceil(studentTransactions.length / itemsPerPage);
+  const studentStartIndex = (currentPage - 1) * itemsPerPage;
+  const studentEndIndex = studentStartIndex + itemsPerPage;
+  const paginatedStudentTransactions = studentTransactions.slice(studentStartIndex, studentEndIndex);
+
+  // Pagination for branch transfers
+  const branchTransferTotalPages = Math.ceil(branchTransfers.length / itemsPerPage);
+  const branchTransferStartIndex = (branchTransferPage - 1) * itemsPerPage;
+  const branchTransferEndIndex = branchTransferStartIndex + itemsPerPage;
+  const paginatedBranchTransfers = branchTransfers.slice(branchTransferStartIndex, branchTransferEndIndex);
+
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
+    setBranchTransferPage(1);
   }, [searchTerm, filters]);
 
   const handleDelete = async (transactionId) => {
@@ -239,18 +269,20 @@ const Reports = () => {
       (reportFilters.includeSummary || reportFilters.onlyStatistics);
 
     if (showStats) {
-      const totalAmount = transactions.reduce((sum, t) => sum + (t.totalAmount || 0), 0);
-      const paidCount = transactions.filter(t => t.isPaid).length;
-      const paidAmount = transactions.filter(t => t.isPaid).reduce((sum, t) => sum + (t.totalAmount || 0), 0);
-
+      // Exclude branch transfers from revenue calculations (internal stock movements)
+      const revenueTransactions = transactions.filter(t => t.transactionType !== 'branch_transfer');
+      const totalAmount = revenueTransactions.reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+      const paidCount = revenueTransactions.filter(t => t.isPaid).length;
+      const paidAmount = revenueTransactions.filter(t => t.isPaid).reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+      
       pdf.setFontSize(10);
       pdf.setFont(undefined, 'bold');
       pdf.text('Statistics', 14, yPos);
-
+      
       const statsY = yPos + 4;
       pdf.setFont(undefined, 'normal');
       pdf.setFontSize(8);
-      pdf.text(`Total: ${transactions.length}`, 16, statsY);
+      pdf.text(`Total: ${revenueTransactions.length}`, 16, statsY);
       pdf.text(`Amount: ${formatCurrencyForPDF(totalAmount)}`, 52, statsY);
       pdf.text(`Paid: ${paidCount} (${formatCurrencyForPDF(paidAmount)})`, 96, statsY);
 
@@ -361,9 +393,9 @@ const Reports = () => {
 
             // Item table header
         pdf.setFontSize(6);
-        pdf.setFont(undefined, 'bold');
-        pdf.setFillColor(245, 245, 245);
-        pdf.rect(16, yPos - 2, 112, 4, 'F');
+            pdf.setFont(undefined, 'bold');
+            pdf.setFillColor(245, 245, 245);
+            pdf.rect(16, yPos - 2, 112, 4, 'F');
             pdf.text('Item Name', 18, yPos);
             pdf.text('Qty', 78, yPos);
             pdf.text('Unit Price', 92, yPos);
@@ -517,7 +549,7 @@ const Reports = () => {
         pdf.text('Value', 160, yPos);
         yPos += 6;
 
-            pdf.setFont(undefined, 'normal');
+        pdf.setFont(undefined, 'normal');
             pdf.setFontSize(7);
 
         products.forEach((product, index) => {
@@ -861,80 +893,130 @@ const Reports = () => {
         </div>
 
         <div className="space-y-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-                <div className="lg:col-span-2 relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <input
-                    type="text"
-                    placeholder="Search by transaction ID, student name, or student ID..."
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              {/* Filter Header */}
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <Filter className="text-blue-600" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Filters</h3>
+                    <p className="text-xs text-gray-500">Filter transactions by various criteria</p>
+                  </div>
                 </div>
-                <select
-                  value={filters.course}
-                  onChange={(e) => setFilters({ ...filters, course: e.target.value })}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                <button
+                  onClick={() => setFiltersExpanded(!filtersExpanded)}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                 >
-                  <option value="">All Courses</option>
-                  {courseOptions.map(course => (
-                    <option key={course} value={course}>{course.toUpperCase()}</option>
-                  ))}
-                </select>
-                <select
-                  value={filters.paymentMethod}
-                  onChange={(e) => setFilters({ ...filters, paymentMethod: e.target.value })}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="">All Payment Methods</option>
-                  <option value="cash">Cash</option>
-                  <option value="online">Online</option>
-                </select>
-                <select
-                  value={filters.isPaid}
-                  onChange={(e) => setFilters({ ...filters, isPaid: e.target.value })}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="">All Payment Status</option>
-                  <option value="true">Paid</option>
-                  <option value="false">Unpaid</option>
-                </select>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <input
-                    type="date"
-                    placeholder="Start Date"
-                    value={filters.startDate}
-                    onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
+                  {filtersExpanded ? (
+                    <>
+                      <ChevronUp size={18} />
+                      <span>Hide Filters</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={18} />
+                      <span>Show More Filters</span>
+                    </>
+                  )}
+                </button>
               </div>
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-                <div className="lg:col-span-2 relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <input
-                    type="date"
-                    placeholder="End Date"
-                    value={filters.endDate}
-                    onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+
+              {/* Main Filters (Always Visible) */}
+              <div className="p-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <div className="lg:col-span-2 relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                    <input
+                      type="text"
+                      placeholder="Search by transaction ID, student name, or student ID..."
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  <select
+                    value={filters.course}
+                    onChange={(e) => setFilters({ ...filters, course: e.target.value })}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">All Courses</option>
+                    {courseOptions.map(course => (
+                      <option key={course} value={course}>{course.toUpperCase()}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={filters.transactionType}
+                    onChange={(e) => setFilters({ ...filters, transactionType: e.target.value })}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">All Transactions</option>
+                    <option value="student">Student Transactions</option>
+                    <option value="branch_transfer">Branch Transfers</option>
+                  </select>
+                  <select
+                    value={filters.paymentMethod}
+                    onChange={(e) => setFilters({ ...filters, paymentMethod: e.target.value })}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">All Payment Methods</option>
+                    <option value="cash">Cash</option>
+                    <option value="online">Online</option>
+                    <option value="transfer">Transfer</option>
+                  </select>
                 </div>
+
+                {/* Expandable Filters Section */}
+                {filtersExpanded && (
+                  <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <select
+                        value={filters.isPaid}
+                        onChange={(e) => setFilters({ ...filters, isPaid: e.target.value })}
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="">All Payment Status</option>
+                        <option value="true">Paid</option>
+                        <option value="false">Unpaid</option>
+                      </select>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
+                        <input
+                          type="date"
+                          placeholder="Start Date"
+                          value={filters.startDate}
+                          onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
+                        <input
+                          type="date"
+                          placeholder="End Date"
+                          value={filters.endDate}
+                          onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
+            {/* Student Transactions Table */}
+            {(filters.transactionType === '' || filters.transactionType === 'student') && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-200 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Transaction List</h3>
-                  <p className="text-sm text-gray-500">Review all transactions and manage receipts</p>
+                  <h3 className="text-lg font-semibold text-gray-900">Student Transactions</h3>
+                  <p className="text-sm text-gray-500">Review student transactions and manage receipts</p>
                 </div>
                 <div className="flex items-center gap-4">
                   <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
-                    {filteredTransactions.length} transactions
+                    {studentTransactions.length} transactions
                   </span>
                   <div className="flex items-center gap-2">
                     <label className="text-sm text-gray-600">Show:</label>
@@ -963,14 +1045,14 @@ const Reports = () => {
               ) : (
                 <>
                   <div className="overflow-x-auto">
-                    {filteredTransactions.length === 0 ? (
+                    {studentTransactions.length === 0 ? (
                       <div className="p-12 text-center">
                         <div className="text-6xl mb-4">📋</div>
-                        <h3 className="text-xl font-semibold text-gray-900 mb-2">No transactions found</h3>
+                        <h3 className="text-xl font-semibold text-gray-900 mb-2">No student transactions found</h3>
                         <p className="text-gray-600">
                           {searchTerm || Object.values(filters).some(f => f !== '')
                             ? 'Try adjusting your search criteria'
-                            : 'No transactions have been created yet'}
+                            : 'No student transactions have been created yet'}
                         </p>
                       </div>
                     ) : (
@@ -988,16 +1070,16 @@ const Reports = () => {
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                          {paginatedTransactions.map(transaction => (
+                          {paginatedStudentTransactions.map(transaction => (
                             <tr key={transaction._id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-gray-900">{transaction.student?.name}</span>
-                                  <span className="text-xs text-gray-500">{transaction.student?.studentId}</span>
+                                  <span className="text-sm font-medium text-gray-900">{transaction.student?.name || 'N/A'}</span>
+                                  <span className="text-xs text-gray-500">{transaction.student?.studentId || ''}</span>
                                 </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
-                                <span className="text-sm text-gray-900">{transaction.student?.course?.toUpperCase()}</span>
+                                <span className="text-sm text-gray-900">{transaction.student?.course?.toUpperCase() || 'N/A'}</span>
                               </td>
                               <td className="px-6 py-4">
                                 <span className="text-sm text-gray-900">
@@ -1008,13 +1090,25 @@ const Reports = () => {
                                 <span className="text-sm font-semibold text-gray-900">{formatCurrency(transaction.totalAmount)}</span>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
+                                {transaction.transactionType === 'branch_transfer' ? (
+                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                    transaction.isPaid 
+                                      ? 'bg-green-100 text-green-800'
+                                      : 'bg-red-100 text-red-800'
+                                  }`}>
+                                    {transaction.isPaid ? 'Paid' : 'Unpaid'}
+                                  </span>
+                                ) : (
                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                                   transaction.paymentMethod === 'cash'
                                     ? 'bg-green-100 text-green-800'
-                                    : 'bg-blue-100 text-blue-800'
-                                }`}>
-                                  {transaction.paymentMethod === 'cash' ? 'Cash' : 'Online'}
-                                </span>
+                                      : transaction.paymentMethod === 'online'
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : 'bg-purple-100 text-purple-800'
+                                  }`}>
+                                    {transaction.paymentMethod === 'cash' ? 'Cash' : transaction.paymentMethod === 'online' ? 'Online' : 'Transfer'}
+                                  </span>
+                                )}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -1051,13 +1145,13 @@ const Reports = () => {
                     )}
                   </div>
 
-                  {filteredTransactions.length > 0 && totalPages > 1 && (
+                  {studentTransactions.length > 0 && studentTotalPages > 1 && (
                     <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
                       <div className="flex items-center justify-between">
                         <div className="text-sm text-gray-600">
-                          Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
-                          <span className="font-medium">{Math.min(endIndex, filteredTransactions.length)}</span> of{' '}
-                          <span className="font-medium">{filteredTransactions.length}</span> transactions
+                          Showing <span className="font-medium">{studentStartIndex + 1}</span> to{' '}
+                          <span className="font-medium">{Math.min(studentEndIndex, studentTransactions.length)}</span> of{' '}
+                          <span className="font-medium">{studentTransactions.length}</span> transactions
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -1070,10 +1164,10 @@ const Reports = () => {
                           </button>
 
                           <div className="flex items-center gap-1">
-                            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => {
+                            {Array.from({ length: studentTotalPages }, (_, i) => i + 1).map(page => {
                               if (
                                 page === 1 ||
-                                page === totalPages ||
+                                page === studentTotalPages ||
                                 (page >= currentPage - 1 && page <= currentPage + 1)
                               ) {
                                 return (
@@ -1097,8 +1191,8 @@ const Reports = () => {
                           </div>
 
                           <button
-                            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                            disabled={currentPage === totalPages}
+                            onClick={() => setCurrentPage(prev => Math.min(studentTotalPages, prev + 1))}
+                            disabled={currentPage === studentTotalPages}
                             className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                           >
                             Next
@@ -1111,6 +1205,192 @@ const Reports = () => {
                 </>
               )}
             </div>
+            )}
+
+            {/* Branch Transfers Table */}
+            {(filters.transactionType === '' || filters.transactionType === 'branch_transfer') && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Branch Transfers</h3>
+                  <p className="text-sm text-gray-500">Review stock transfers to branches</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                    {branchTransfers.length} transfers
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600">Show:</label>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(Number(e.target.value));
+                        setBranchTransferPage(1);
+                      }}
+                      className="px-2 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <div className="w-8 h-8 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+                  <p className="text-gray-600">Loading transfers...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    {branchTransfers.length === 0 ? (
+                      <div className="p-12 text-center">
+                        <div className="text-6xl mb-4">📦</div>
+                        <h3 className="text-xl font-semibold text-gray-900 mb-2">No branch transfers found</h3>
+                        <p className="text-gray-600">
+                          {searchTerm || Object.values(filters).some(f => f !== '')
+                            ? 'Try adjusting your search criteria'
+                            : 'No branch transfers have been created yet'}
+                        </p>
+                      </div>
+                    ) : (
+                      <table className="w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Amount</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment Status</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {paginatedBranchTransfers.map(transaction => (
+                            <tr key={transaction._id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-medium text-gray-900">{transaction.branchTransfer?.branchName || 'N/A'}</span>
+                                  <span className="text-xs text-gray-500">Branch Transfer</span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className="text-sm text-gray-900">{transaction.branchTransfer?.branchLocation || 'N/A'}</span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="text-sm text-gray-900">
+                                  {transaction.items?.length || 0} item{transaction.items?.length !== 1 ? 's' : ''}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className="text-sm font-semibold text-gray-900">{formatCurrency(transaction.totalAmount)}</span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                  transaction.isPaid 
+                                    ? 'bg-green-100 text-green-800'
+                                    : 'bg-red-100 text-red-800'
+                                }`}>
+                                  {transaction.isPaid ? 'Paid' : 'Unpaid'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className="text-sm text-gray-500">{formatDate(transaction.transactionDate)}</span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => handleViewDetails(transaction)}
+                                    className="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                                  >
+                                    <Eye size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(transaction._id)}
+                                    className="flex items-center gap-1 px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {branchTransfers.length > 0 && branchTransferTotalPages > 1 && (
+                    <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-600">
+                          Showing <span className="font-medium">{branchTransferStartIndex + 1}</span> to{' '}
+                          <span className="font-medium">{Math.min(branchTransferEndIndex, branchTransfers.length)}</span> of{' '}
+                          <span className="font-medium">{branchTransfers.length}</span> transfers
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setBranchTransferPage(prev => Math.max(1, prev - 1))}
+                            disabled={branchTransferPage === 1}
+                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                          >
+                            <ChevronLeft size={16} />
+                            Previous
+                          </button>
+
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: branchTransferTotalPages }, (_, i) => i + 1).map(page => {
+                              if (
+                                page === 1 ||
+                                page === branchTransferTotalPages ||
+                                (page >= branchTransferPage - 1 && page <= branchTransferPage + 1)
+                              ) {
+                                return (
+                                  <button
+                                    key={page}
+                                    onClick={() => setBranchTransferPage(page)}
+                                    className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors ${
+                                      branchTransferPage === page
+                                        ? 'bg-blue-600 text-white border-blue-600'
+                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    {page}
+                                  </button>
+                                );
+                              } else if (
+                                page === branchTransferPage - 2 ||
+                                page === branchTransferPage + 2
+                              ) {
+                                return (
+                                  <span key={page} className="px-2 text-gray-500">
+                                    ...
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })}
+                          </div>
+                          <button
+                            onClick={() => setBranchTransferPage(prev => Math.min(branchTransferTotalPages, prev + 1))}
+                            disabled={branchTransferPage === branchTransferTotalPages}
+                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                          >
+                            Next
+                            <ChevronRight size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            )}
           </div>
       </div>
 

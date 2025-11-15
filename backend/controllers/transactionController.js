@@ -205,6 +205,7 @@ const createTransaction = asyncHandler(async (req, res) => {
   // Create transaction
   const transaction = await Transaction.create({
     transactionId,
+    transactionType: 'student', // Explicitly set for student transactions
     student: {
       userId: student._id,
       name: student.name,
@@ -248,18 +249,25 @@ const createTransaction = asyncHandler(async (req, res) => {
  * @access  Public
  */
 const getAllTransactions = asyncHandler(async (req, res) => {
-  const { course, studentId, paymentMethod, isPaid } = req.query;
+  const { course, studentId, transactionType, paymentMethod, isPaid, startDate, endDate } = req.query;
   
   const filter = {};
   
-  if (course) {
-    filter['student.course'] = course;
+  if (transactionType) {
+    filter.transactionType = transactionType;
   }
   
-  if (studentId) {
-    const student = await User.findById(studentId);
-    if (student) {
-      filter['student.userId'] = student._id;
+  // Only apply student-related filters if transaction type is student or not specified
+  if (!transactionType || transactionType === 'student') {
+    if (course) {
+      filter['student.course'] = course;
+    }
+    
+    if (studentId) {
+      const student = await User.findById(studentId);
+      if (student) {
+        filter['student.userId'] = student._id;
+      }
     }
   }
   
@@ -267,12 +275,20 @@ const getAllTransactions = asyncHandler(async (req, res) => {
     filter.paymentMethod = paymentMethod;
   }
   
-  if (isPaid !== undefined) {
+  if (isPaid !== undefined && isPaid !== '') {
     filter.isPaid = isPaid === 'true';
+  }
+
+  if (startDate || endDate) {
+    filter.transactionDate = {};
+    if (startDate) filter.transactionDate.$gte = new Date(startDate);
+    if (endDate) filter.transactionDate.$lte = new Date(endDate + 'T23:59:59');
   }
 
   const transactions = await Transaction.find(filter)
     .populate('items.productId', 'name price imageUrl')
+    .populate('student.userId', 'name studentId course year branch')
+    .populate('branchTransfer.branchId', 'name location')
     .sort({ transactionDate: -1 });
 
   res.status(200).json(transactions);

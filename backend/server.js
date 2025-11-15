@@ -9,6 +9,7 @@ const academicConfigRoutes = require("./routes/academicConfigRoutes");
 const transactionRoutes = require("./routes/transactionRoutes");
 const vendorRoutes = require("./routes/vendorRoutes");
 const stockEntryRoutes = require("./routes/stockEntryRoutes");
+const stockTransferRoutes = require("./routes/stockTransferRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
 const auditLogRoutes = require("./routes/auditLogRoutes");
 const sqlStudentRoutes = require("./routes/sqlStudentRoutes");
@@ -113,6 +114,7 @@ app.use("/api/transactions", transactionRoutes);
 app.use("/api/vendors", vendorRoutes);
 // Mount stock entry routes
 app.use("/api/stock-entries", stockEntryRoutes);
+app.use("/api/stock-transfers", stockTransferRoutes);
 // Settings routes
 app.use("/api/settings", settingsRoutes);
 // Audit log routes

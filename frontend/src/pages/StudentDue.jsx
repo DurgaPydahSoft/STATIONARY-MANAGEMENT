@@ -613,14 +613,6 @@ const StudentDue = () => {
               <Download size={20} />
               Generate Report
             </button>
-            {/* <button
-              onClick={handleRefresh}
-              disabled={refreshing || studentsLoading || productsLoading}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-            >
-              <RefreshCw size={16} className={refreshing || studentsLoading || productsLoading ? 'animate-spin' : ''} />
-              {refreshing || studentsLoading || productsLoading ? 'Refreshing...' : 'Refresh'}
-            </button> */}
           </div>
         </div>
 

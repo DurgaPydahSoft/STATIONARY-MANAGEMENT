@@ -950,7 +950,7 @@ const updateTransaction = asyncHandler(async (req, res) => {
           if (!product) continue;
 
           if (product.isSet) {
-            restoreSetComponentsFully(stockChanges, product, item);
+            restoreSetComponentsFully(restoreChanges, product, item);
           } else {
             accumulateStockChange(restoreChanges, productId, item.quantity);
           }

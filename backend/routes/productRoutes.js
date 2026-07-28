@@ -4,6 +4,7 @@ const {
   createProduct,
   getProducts,
   getProductById,
+  previewProductImpact,
   updateProduct,
   deleteProduct,
 } = require('../controllers/productController');
@@ -13,6 +14,7 @@ const {
 router.route('/').get(getProducts).post(createProduct);
 
 // @route   GET /api/products/:id
+router.post('/:id/impact-preview', previewProductImpact);
 router.route('/:id').get(getProductById).put(updateProduct).delete(deleteProduct);
 
 module.exports = router;

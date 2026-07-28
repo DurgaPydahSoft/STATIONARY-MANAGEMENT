@@ -49,6 +49,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
     setPriceAdjustVal('');
   };
   const [viewMode, setViewMode] = useState('table');
+  const [affectExistingTransactions, setAffectExistingTransactions] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -74,6 +75,8 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
   const [isFetchingStudents, setIsFetchingStudents] = useState(false);
   const [studentSearchQuery, setStudentSearchQuery] = useState(''); // Search query for filtering fetched students
   const [selectedConfigCourseId, setSelectedConfigCourseId] = useState(''); // New state to track specific ID selection
+  const [impactPreview, setImpactPreview] = useState(null);
+  const [loadingImpactPreview, setLoadingImpactPreview] = useState(false);
 
   // Filter fetched students based on search query
   const filteredFetchedStudents = useMemo(() => {
@@ -282,6 +285,126 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
     setIsEditing(false);
   };
 
+  const normalizeSetItemsForCompare = (setItems = []) =>
+    (Array.isArray(setItems) ? setItems : [])
+      .map(item => ({
+        productId: String(item?.productId || item?.product?._id || item?.product || ''),
+        quantity: Number(item?.quantity) || 0,
+      }))
+      .filter(item => item.productId && item.quantity > 0)
+      .sort((a, b) => {
+        if (a.productId === b.productId) return a.quantity - b.quantity;
+        return a.productId.localeCompare(b.productId);
+      });
+
+  const haveSetItemsChanged = (previousSetItems = [], nextSetItems = []) => {
+    const previous = normalizeSetItemsForCompare(previousSetItems);
+    const next = normalizeSetItemsForCompare(nextSetItems);
+    if (previous.length !== next.length) return true;
+
+    return previous.some((item, index) => {
+      const other = next[index];
+      return item.productId !== other.productId || item.quantity !== other.quantity;
+    });
+  };
+
+  const setCompositionChanged =
+    Boolean(selectedProduct?._id) &&
+    Boolean(selectedProduct?.isSet) &&
+    Boolean(formData.isSet) &&
+    haveSetItemsChanged(selectedProduct?.setItems || [], formData.setItems || []);
+
+  const setChangeDetails = useMemo(() => {
+    if (!setCompositionChanged) {
+      return { added: [], removed: [], quantityChanged: [] };
+    }
+
+    const productNames = new Map((products || []).map((product) => [String(product._id), product.name]));
+    const oldItems = normalizeSetItemsForCompare(selectedProduct?.setItems || []);
+    const newItems = normalizeSetItemsForCompare(formData.setItems || []);
+    const oldMap = new Map(oldItems.map((item) => [item.productId, item.quantity]));
+    const newMap = new Map(newItems.map((item) => [item.productId, item.quantity]));
+    const allIds = new Set([...oldMap.keys(), ...newMap.keys()]);
+
+    const added = [];
+    const removed = [];
+    const quantityChanged = [];
+
+    allIds.forEach((productId) => {
+      const oldQty = oldMap.get(productId) || 0;
+      const newQty = newMap.get(productId) || 0;
+      const name =
+        productNames.get(productId) ||
+        (selectedProduct?.setItems || []).find((item) => String(item?.product?._id || item?.product) === productId)?.productNameSnapshot ||
+        (formData.setItems || []).find((item) => String(item?.productId) === productId)?.productName ||
+        'Unknown Product';
+
+      if (!oldQty && newQty) {
+        added.push({ productId, name, quantity: newQty });
+      } else if (oldQty && !newQty) {
+        removed.push({ productId, name, quantity: oldQty });
+      } else if (oldQty !== newQty) {
+        quantityChanged.push({ productId, name, oldQuantity: oldQty, newQuantity: newQty, delta: newQty - oldQty });
+      }
+    });
+
+    return {
+      added: added.sort((a, b) => a.name.localeCompare(b.name)),
+      removed: removed.sort((a, b) => a.name.localeCompare(b.name)),
+      quantityChanged: quantityChanged.sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }, [formData.setItems, products, selectedProduct, setCompositionChanged]);
+
+  useEffect(() => {
+    if (!setCompositionChanged || !selectedProduct?._id) {
+      setImpactPreview(null);
+      setLoadingImpactPreview(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchImpactPreview = async () => {
+      setLoadingImpactPreview(true);
+      try {
+        const response = await fetch(apiUrl(`/api/products/${selectedProduct._id}/impact-preview`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            setItems: (formData.setItems || []).map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+            })),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to load impact preview');
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setImpactPreview(data);
+        }
+      } catch (err) {
+        console.error('Error loading impact preview:', err);
+        if (!cancelled) {
+          setImpactPreview(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingImpactPreview(false);
+        }
+      }
+    };
+
+    fetchImpactPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.setItems, selectedProduct?._id, setCompositionChanged]);
+
   useEffect(() => {
     if (selectedProduct && showProductDetail) {
       const productYears = selectedProduct.years || (selectedProduct.year ? [selectedProduct.year] : []);
@@ -374,6 +497,8 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
       }
 
       setSetItemToAdd('');
+      setAffectExistingTransactions(false);
+      setImpactPreview(null);
       setIsEditing(false);
     }
   }, [selectedProduct, showProductDetail, collegeStockMap, config]);
@@ -404,6 +529,8 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
       setFetchedStudents([]);
       setError('');
       setSetItemToAdd('');
+      setAffectExistingTransactions(false);
+      setImpactPreview(null);
       setSelectedConfigCourseId(''); // Reset our new state
     }
   }, [showAddProduct, selectedCourse, selectedYear]);
@@ -778,6 +905,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
             collegeId: activeCollegeId || undefined,
             applicabilityMode: formData.applicabilityMode,
             applicableStudents: formData.applicabilityMode === 'students' ? formData.applicableStudents.filter(s => s && s._id).map(s => s._id) : [],
+            affectExistingTransactions: setCompositionChanged ? affectExistingTransactions : false,
           }),
         });
 
@@ -792,6 +920,20 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
         }
 
         handleProductUpdate(updated);
+        if (updated?.syncSummary?.affectedExistingTransactions) {
+          setStatusMsg(`Product updated. Existing issued kits updated in ${updated.syncSummary.transactionsUpdated || 0} transaction(s); stock reconciled in ${updated.syncSummary.collegeStocksAdjusted || 0} college(s).`);
+          setTimeout(() => setStatusMsg(''), 5000);
+        } else if (setCompositionChanged) {
+          setStatusMsg(
+            affectExistingTransactions
+              ? 'Product updated.'
+              : 'Product updated. Existing issued kits were left unchanged.'
+          );
+          setTimeout(() => setStatusMsg(''), 4000);
+        } else {
+          setStatusMsg('Product updated successfully!');
+          setTimeout(() => setStatusMsg(''), 3000);
+        }
       } else if (isCreateOperation) {
         // Create new product (with price, but stock stays 0)
         console.log('Creating new product:', formData.name);
@@ -1757,6 +1899,133 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                               <p className="text-xs text-purple-600 bg-purple-100/60 px-3 py-2 rounded-lg">
                                 No items selected yet.
                               </p>
+                            )}
+
+                            {setCompositionChanged && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-4 space-y-4">
+                                <label className="flex items-start gap-3 text-sm text-amber-900">
+                                  <input
+                                    type="checkbox"
+                                    checked={affectExistingTransactions}
+                                    onChange={(e) => setAffectExistingTransactions(e.target.checked)}
+                                    className="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                                  />
+                                  <span>
+                                    <span className="block font-semibold">
+                                      Also apply this kit item change to students who already received this kit
+                                    </span>
+                                    <span className="block text-xs text-amber-800 mt-1">
+                                      Review the detailed impact below. If enabled, old issued kit transactions will be updated and stock will be reconciled accordingly.
+                                    </span>
+                                  </span>
+                                </label>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                                  <div className="bg-white border border-green-200 rounded-lg p-3">
+                                    <p className="font-semibold text-green-700 mb-2">Items Added</p>
+                                    {setChangeDetails.added.length > 0 ? (
+                                      <ul className="space-y-1 text-gray-700">
+                                        {setChangeDetails.added.map((item) => (
+                                          <li key={`added-${item.productId}`}>{item.name} x{item.quantity}</li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="text-gray-500">No newly added items.</p>
+                                    )}
+                                  </div>
+
+                                  <div className="bg-white border border-red-200 rounded-lg p-3">
+                                    <p className="font-semibold text-red-700 mb-2">Items Removed</p>
+                                    {setChangeDetails.removed.length > 0 ? (
+                                      <ul className="space-y-1 text-gray-700">
+                                        {setChangeDetails.removed.map((item) => (
+                                          <li key={`removed-${item.productId}`}>{item.name} x{item.quantity}</li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="text-gray-500">No removed items.</p>
+                                    )}
+                                  </div>
+
+                                  <div className="bg-white border border-blue-200 rounded-lg p-3">
+                                    <p className="font-semibold text-blue-700 mb-2">Qty Changed</p>
+                                    {setChangeDetails.quantityChanged.length > 0 ? (
+                                      <ul className="space-y-1 text-gray-700">
+                                        {setChangeDetails.quantityChanged.map((item) => (
+                                            <li key={`changed-${item.productId}`}>
+                                              {item.name}: {item.oldQuantity} {'->'} {item.newQuantity}
+                                            </li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="text-gray-500">No quantity-only changes.</p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="bg-white border border-amber-200 rounded-lg p-3 text-xs space-y-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className="font-semibold text-amber-900">Impact On Existing Issued Kits</p>
+                                    {loadingImpactPreview && (
+                                      <span className="text-amber-700">Calculating...</span>
+                                    )}
+                                  </div>
+
+                                  {impactPreview && !loadingImpactPreview ? (
+                                    <>
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <div className="bg-amber-50 rounded-lg p-3">
+                                          <p className="text-[11px] uppercase tracking-wide text-amber-700 font-semibold">Affected Transactions</p>
+                                          <p className="text-lg font-bold text-amber-900">{impactPreview.transactionsUpdated || 0}</p>
+                                        </div>
+                                        <div className="bg-amber-50 rounded-lg p-3">
+                                          <p className="text-[11px] uppercase tracking-wide text-amber-700 font-semibold">Total Kit Copies</p>
+                                          <p className="text-lg font-bold text-amber-900">{impactPreview.totalAffectedKitQuantity || 0}</p>
+                                        </div>
+                                        <div className="bg-amber-50 rounded-lg p-3">
+                                          <p className="text-[11px] uppercase tracking-wide text-amber-700 font-semibold">Affected Colleges</p>
+                                          <p className="text-lg font-bold text-amber-900">{impactPreview.collegeStocksAdjusted || 0}</p>
+                                        </div>
+                                      </div>
+
+                                      {(impactPreview.colleges || []).length > 0 ? (
+                                        <div className="space-y-3">
+                                          {(impactPreview.colleges || []).map((college) => (
+                                            <div key={college.collegeId} className="border border-amber-100 rounded-lg overflow-hidden">
+                                              <div className="bg-amber-50 px-3 py-2">
+                                                <p className="font-semibold text-amber-900">{college.collegeName}</p>
+                                              </div>
+                                              <div className="p-3 space-y-2">
+                                                {(college.items || []).map((item) => (
+                                                  <div key={`${college.collegeId}-${item.productId}`} className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 text-gray-700">
+                                                    <span className="font-medium">{item.productName}</span>
+                                                      <span>
+                                                        stock {item.currentStock} {'->'} {item.projectedStock}
+                                                      <span className={`ml-2 font-semibold ${item.delta >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                                        ({item.delta >= 0 ? '+' : ''}{item.delta})
+                                                      </span>
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p className="text-gray-600">
+                                          Existing kit records will change, but there is no paid stock deduction impact to reconcile.
+                                        </p>
+                                      )}
+                                    </>
+                                  ) : (
+                                    !loadingImpactPreview && (
+                                      <p className="text-gray-600">
+                                        No existing issued-kit impact detected yet.
+                                      </p>
+                                    )
+                                  )}
+                                </div>
+                              </div>
                             )}
                           </div>
                         )}

@@ -1,5 +1,6 @@
 const { Product } = require('../models/productModel');
 const { College } = require('../models/collegeModel');
+const { Transaction } = require('../models/transactionModel');
 const { getMySqlPool } = require('../config/mysql');
 const { normalizeStudentRow } = require('./sqlStudentController');
 
@@ -98,6 +99,294 @@ const sanitizeSetItems = async (setItems) => {
       };
     })
     .filter(Boolean);
+};
+
+const normalizeSetItemsForComparison = (setItems = []) =>
+  (Array.isArray(setItems) ? setItems : [])
+    .map((item) => ({
+      productId: String(item?.product?._id || item?.product || item?.productId || ''),
+      quantity: Number(item?.quantity) || 0,
+    }))
+    .filter((item) => item.productId && item.quantity > 0)
+    .sort((a, b) => {
+      if (a.productId === b.productId) return a.quantity - b.quantity;
+      return a.productId.localeCompare(b.productId);
+    });
+
+const haveSetItemsChanged = (oldSetItems = [], newSetItems = []) => {
+  const normalizedOld = normalizeSetItemsForComparison(oldSetItems);
+  const normalizedNew = normalizeSetItemsForComparison(newSetItems);
+  if (normalizedOld.length !== normalizedNew.length) return true;
+
+  return normalizedOld.some((item, index) => {
+    const other = normalizedNew[index];
+    return item.productId !== other.productId || item.quantity !== other.quantity;
+  });
+};
+
+const accumulateCollegeStockDelta = (deltaMap, productId, delta) => {
+  if (!productId || !Number.isFinite(delta) || delta === 0) return;
+  const key = String(productId);
+  deltaMap.set(key, (deltaMap.get(key) || 0) + delta);
+};
+
+const applyCollegeStockChanges = async (collegeId, deltaMap) => {
+  if (!collegeId || !deltaMap || deltaMap.size === 0) return;
+
+  const college = await College.findById(collegeId);
+  if (!college) return;
+
+  const stockMap = new Map();
+  (college.stock || []).forEach((entry) => {
+    stockMap.set(String(entry.product), Number(entry.quantity) || 0);
+  });
+
+  deltaMap.forEach((delta, productId) => {
+    stockMap.set(productId, (stockMap.get(productId) || 0) + delta);
+  });
+
+  college.stock = Array.from(stockMap.entries()).map(([product, quantity]) => ({
+    product,
+    quantity,
+  }));
+  await college.save();
+};
+
+const buildUpdatedSetComponents = (itemQuantity, nextSetItems, previousComponents = []) => {
+  const previousById = new Map();
+  (Array.isArray(previousComponents) ? previousComponents : []).forEach((component) => {
+    const productId = String(component?.productId?._id || component?.productId || '');
+    if (productId) previousById.set(productId, component);
+  });
+
+  return (Array.isArray(nextSetItems) ? nextSetItems : []).map((setItem) => {
+    const productId = String(setItem.product);
+    const previous = previousById.get(productId);
+    const taken = previous
+      ? previous.taken !== false
+      : true;
+
+    return {
+      productId: setItem.product,
+      name: setItem.productNameSnapshot || previous?.name || '',
+      quantity: (Number(itemQuantity) || 0) * (Number(setItem.quantity) || 1),
+      taken,
+      reason: taken ? undefined : (previous?.reason || 'Marked as not taken'),
+    };
+  });
+};
+
+const reconcileSetComponentStock = (deltaMap, previousComponents = [], nextComponents = []) => {
+  const previousById = new Map();
+  const nextById = new Map();
+
+  (Array.isArray(previousComponents) ? previousComponents : []).forEach((component) => {
+    const productId = String(component?.productId?._id || component?.productId || '');
+    if (productId) previousById.set(productId, component);
+  });
+
+  (Array.isArray(nextComponents) ? nextComponents : []).forEach((component) => {
+    const productId = String(component?.productId?._id || component?.productId || '');
+    if (productId) nextById.set(productId, component);
+  });
+
+  const allProductIds = new Set([...previousById.keys(), ...nextById.keys()]);
+  allProductIds.forEach((productId) => {
+    const previous = previousById.get(productId);
+    const next = nextById.get(productId);
+    const previousReserved = previous && previous.taken !== false ? Number(previous.quantity) || 0 : 0;
+    const nextReserved = next && next.taken !== false ? Number(next.quantity) || 0 : 0;
+    accumulateCollegeStockDelta(deltaMap, productId, previousReserved - nextReserved);
+  });
+};
+
+const buildIssuedSetImpactPreview = async ({ productId, nextSetItems }) => {
+  const transactions = await Transaction.find({
+    transactionType: { $in: ['student', 'employee'] },
+    'items.productId': productId,
+    'items.isSet': true,
+  }).lean();
+
+  if (transactions.length === 0) {
+    return {
+      affectedExistingTransactions: true,
+      transactionsUpdated: 0,
+      totalAffectedKitQuantity: 0,
+      collegeStocksAdjusted: 0,
+      colleges: [],
+    };
+  }
+
+  const stockChangesByCollege = new Map();
+  let transactionsUpdated = 0;
+  let totalAffectedKitQuantity = 0;
+
+  for (const transaction of transactions) {
+    let touched = false;
+    const collegeId = transaction.collegeId || transaction.branchId;
+    let collegeDelta = null;
+
+    for (const item of transaction.items || []) {
+      if (String(item.productId) !== String(productId) || !item.isSet) continue;
+
+      totalAffectedKitQuantity += Number(item.quantity) || 0;
+      touched = true;
+
+      const previousComponents = Array.isArray(item.setComponents) ? item.setComponents : [];
+      const nextComponents = buildUpdatedSetComponents(item.quantity, nextSetItems, previousComponents);
+
+      if (transaction.isPaid && transaction.stockDeducted && collegeId) {
+        if (!collegeDelta) {
+          const key = String(collegeId);
+          if (!stockChangesByCollege.has(key)) stockChangesByCollege.set(key, new Map());
+          collegeDelta = stockChangesByCollege.get(key);
+        }
+        reconcileSetComponentStock(collegeDelta, previousComponents, nextComponents);
+      }
+    }
+
+    if (touched) transactionsUpdated += 1;
+  }
+
+  const collegeIds = Array.from(stockChangesByCollege.keys());
+  const colleges = collegeIds.length > 0
+    ? await College.find({ _id: { $in: collegeIds } }).select('name stock').lean()
+    : [];
+  const collegeById = new Map(colleges.map((college) => [String(college._id), college]));
+
+  const affectedProductIds = new Set();
+  stockChangesByCollege.forEach((deltaMap) => {
+    deltaMap.forEach((_, productId) => affectedProductIds.add(productId));
+  });
+  const products = affectedProductIds.size > 0
+    ? await Product.find({ _id: { $in: Array.from(affectedProductIds) } }).select('name').lean()
+    : [];
+  const productNameById = new Map(products.map((product) => [String(product._id), product.name]));
+
+  const collegeSummaries = [];
+  let collegeStocksAdjusted = 0;
+
+  for (const [collegeId, deltaMap] of stockChangesByCollege.entries()) {
+    if (deltaMap.size === 0) continue;
+    collegeStocksAdjusted += 1;
+
+    const college = collegeById.get(collegeId);
+    const currentStockMap = new Map();
+    (college?.stock || []).forEach((entry) => {
+      currentStockMap.set(String(entry.product), Number(entry.quantity) || 0);
+    });
+
+    const items = Array.from(deltaMap.entries())
+      .filter(([, delta]) => delta !== 0)
+      .map(([productId, delta]) => {
+        const currentStock = currentStockMap.get(productId) || 0;
+        return {
+          productId,
+          productName: productNameById.get(productId) || 'Unknown Product',
+          delta,
+          currentStock,
+          projectedStock: currentStock + delta,
+        };
+      })
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    collegeSummaries.push({
+      collegeId,
+      collegeName: college?.name || 'Unknown College',
+      items,
+    });
+  }
+
+  return {
+    affectedExistingTransactions: true,
+    transactionsUpdated,
+    totalAffectedKitQuantity,
+    collegeStocksAdjusted,
+    colleges: collegeSummaries,
+  };
+};
+
+const syncIssuedSetTransactions = async ({ productId, nextSetItems }) => {
+  const preview = await buildIssuedSetImpactPreview({ productId, nextSetItems });
+  const transactions = await Transaction.find({
+    transactionType: { $in: ['student', 'employee'] },
+    'items.productId': productId,
+    'items.isSet': true,
+  });
+  const stockChangesByCollege = new Map();
+
+  for (const transaction of transactions) {
+    let touched = false;
+    const collegeId = transaction.collegeId || transaction.branchId;
+    let collegeDelta = null;
+
+    for (const item of transaction.items || []) {
+      if (String(item.productId) !== String(productId) || !item.isSet) continue;
+
+      const previousComponents = Array.isArray(item.setComponents) ? item.setComponents : [];
+      const nextComponents = buildUpdatedSetComponents(item.quantity, nextSetItems, previousComponents);
+
+      if (transaction.isPaid && transaction.stockDeducted && collegeId) {
+        if (!collegeDelta) {
+          const key = String(collegeId);
+          if (!stockChangesByCollege.has(key)) stockChangesByCollege.set(key, new Map());
+          collegeDelta = stockChangesByCollege.get(key);
+        }
+        reconcileSetComponentStock(collegeDelta, previousComponents, nextComponents);
+      }
+
+      item.setComponents = nextComponents;
+      item.status = nextComponents.some((component) => component.taken === false) ? 'partial' : 'fulfilled';
+      touched = true;
+    }
+
+    if (touched) {
+      await transaction.save();
+    }
+  }
+
+  for (const [collegeId, deltaMap] of stockChangesByCollege.entries()) {
+    if (deltaMap.size === 0) continue;
+    await applyCollegeStockChanges(collegeId, deltaMap);
+  }
+
+  return preview;
+};
+
+const previewProductImpact = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    const nextSetItems = await sanitizeSetItems(req.body?.setItems);
+    const compositionChanged =
+      Boolean(product.isSet) &&
+      haveSetItemsChanged(product.setItems || [], nextSetItems);
+
+    if (!product.isSet || !compositionChanged) {
+      return res.status(200).json({
+        compositionChanged: false,
+        affectedExistingTransactions: false,
+        transactionsUpdated: 0,
+        totalAffectedKitQuantity: 0,
+        collegeStocksAdjusted: 0,
+        colleges: [],
+      });
+    }
+
+    const preview = await buildIssuedSetImpactPreview({
+      productId: product._id,
+      nextSetItems,
+    });
+
+    res.status(200).json({
+      compositionChanged: true,
+      ...preview,
+    });
+  } catch (error) {
+    console.error('Preview Product Impact Error:', error);
+    res.status(400).json({ message: 'Error previewing product impact', error: error.message });
+  }
 };
 
 /**
@@ -263,7 +552,7 @@ const updateProduct = async (req, res) => {
     // Track old name for updating transactions if name changes
     const oldName = product.name;
 
-    const { name, description, price, stock, imageUrl, forCourse, forCourseId, branch, branchIds, years, year, academicYears, remarks, isSet, setItems, lowStockThreshold, semesters, applicabilityMode, applicableStudents } = req.body;
+    const { name, description, price, stock, imageUrl, forCourse, forCourseId, branch, branchIds, years, year, academicYears, remarks, isSet, setItems, lowStockThreshold, semesters, applicabilityMode, applicableStudents, affectExistingTransactions } = req.body;
     // Handle years array - if years is provided, use it; otherwise fallback to year for backward compatibility
     let parsedYears = undefined;
     if (years !== undefined && Array.isArray(years)) {
@@ -379,6 +668,16 @@ const updateProduct = async (req, res) => {
         isSetFlag = Boolean(isSet);
       }
     }
+    const previousIsSet = Boolean(product.isSet);
+    const previousSetItems = Array.isArray(product.setItems)
+      ? product.setItems.map((item) => ({
+        product: item.product,
+        quantity: item.quantity,
+        productNameSnapshot: item.productNameSnapshot,
+        productPriceSnapshot: item.productPriceSnapshot,
+      }))
+      : [];
+
     let sanitizedSetItems = product.setItems;
 
     if (isSetFlag) {
@@ -412,21 +711,29 @@ const updateProduct = async (req, res) => {
       product.applicableStudents = applicableStudents;
     }
 
+    const setCompositionChanged = previousIsSet && isSetFlag && haveSetItemsChanged(previousSetItems, sanitizedSetItems);
+
     const updated = await product.save();
     await updated.populate({ path: 'setItems.product', select: 'name price isSet' });
+
+    let syncSummary = null;
+    if (setCompositionChanged && affectExistingTransactions === true) {
+      syncSummary = await syncIssuedSetTransactions({
+        productId: updated._id,
+        nextSetItems: sanitizedSetItems,
+      });
+    } else if (setCompositionChanged) {
+      syncSummary = {
+        affectedExistingTransactions: false,
+        transactionsUpdated: 0,
+        collegeStocksAdjusted: 0,
+      };
+    }
 
     // If the product name changed, update it in all related records
     const newName = updated.name;
     if (oldName !== newName) {
       try {
-        const { Transaction } = require('../models/transactionModel');
-        // const { User } = require('../models/userModel'); // REMOVED
-
-        // Helper to convert product name to items key format
-        const nameToKey = (name) => name?.toLowerCase().replace(/\s+/g, '_') || '';
-        const oldKey = nameToKey(oldName);
-        const newKey = nameToKey(newName);
-
         // Update product name in transaction items
         await Transaction.updateMany(
           { 'items.productId': updated._id },
@@ -457,7 +764,12 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    res.json(updated);
+    const responsePayload = updated.toObject ? updated.toObject() : updated;
+    if (syncSummary) {
+      responsePayload.syncSummary = syncSummary;
+    }
+
+    res.json(responsePayload);
   } catch (error) {
     console.error('Update Product Error:', error);
     res.status(400).json({ message: 'Error updating product', error: error.message });
@@ -486,4 +798,4 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-module.exports = { createProduct, getProducts, getProductById, updateProduct, deleteProduct };
+module.exports = { createProduct, getProducts, getProductById, previewProductImpact, updateProduct, deleteProduct };

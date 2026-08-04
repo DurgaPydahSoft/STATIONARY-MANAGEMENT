@@ -475,7 +475,7 @@ const StudentDashboard = ({ currentUser }) => {
                       <th className="px-6 py-3 font-semibold">Year</th>
                       <th className="px-6 py-3 font-semibold">Semester</th>
                       <th className="px-6 py-3 font-semibold">Branch</th>
-
+                      <th className="px-6 py-3 font-semibold">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -496,7 +496,21 @@ const StudentDashboard = ({ currentUser }) => {
                         <td className="px-6 py-4 text-gray-600">{student.year}</td>
                         <td className="px-6 py-4 text-gray-600">{student.semester || '-'}</td>
                         <td className="px-6 py-4 text-gray-600">{student.branch}</td>
-
+                        <td className="px-6 py-4">
+                          {student.status ? (
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              student.status?.toLowerCase() === 'active' ? 'bg-green-100 text-green-800' :
+                              student.status?.toLowerCase() === 'inactive' ? 'bg-gray-100 text-gray-800' :
+                              student.status?.toLowerCase() === 'graduated' ? 'bg-blue-100 text-blue-800' :
+                              student.status?.toLowerCase() === 'cancelled' ? 'bg-red-100 text-red-800' :
+                              'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {student.status}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

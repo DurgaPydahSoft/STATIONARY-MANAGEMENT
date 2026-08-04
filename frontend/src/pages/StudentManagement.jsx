@@ -415,6 +415,7 @@ const StudentManagement = ({ currentUser }) => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Semester</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone Number</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
@@ -454,6 +455,21 @@ const StudentManagement = ({ currentUser }) => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {student.phoneNumber || 'N/A'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {student.status ? (
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        student.status?.toLowerCase() === 'active' ? 'bg-green-100 text-green-800' :
+                        student.status?.toLowerCase() === 'inactive' ? 'bg-gray-100 text-gray-800' :
+                        student.status?.toLowerCase() === 'graduated' ? 'bg-blue-100 text-blue-800' :
+                        student.status?.toLowerCase() === 'cancelled' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {student.status}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">-</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">

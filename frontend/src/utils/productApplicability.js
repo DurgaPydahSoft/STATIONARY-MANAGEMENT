@@ -2,7 +2,12 @@
  * Client-side product ↔ student matching (mirrors backend/utils/productApplicability.js).
  */
 
-
+import {
+  getDefaultAcademicYear,
+  normalizeAcademicYearLabel,
+  parseBatchStartYear,
+  getExpectedStudyYearForStudent,
+} from './academicYears';
 export const normalizeCourse = (value) => {
   if (!value) return '';
   if (/^[0-9a-fA-F]{24}$/.test(String(value))) return String(value);
@@ -27,6 +32,35 @@ export const getProductYears = (product) => {
 export const getProductAcademicYears = (product) => {
   if (!product || !Array.isArray(product.academicYears)) return [];
   return product.academicYears.map((y) => String(y).trim()).filter(Boolean);
+};
+
+/**
+ * Kits tagged with academicYears apply only when:
+ * 1. The kit's academic year matches the current academic year
+ * 2. The student's batch implies the kit's configured study year in that AY
+ */
+export const kitMatchesStudentBatchAndAcademicYear = (product, student, date = new Date()) => {
+  if (!product?.isSet) return true;
+
+  const kitAcademicYears = getProductAcademicYears(product);
+  if (kitAcademicYears.length === 0) return true;
+
+  const studentBatch = parseBatchStartYear(student);
+  if (!studentBatch) return false;
+
+  const currentAyLabel = normalizeAcademicYearLabel(getDefaultAcademicYear(date));
+  const kitForCurrentAy = kitAcademicYears.some(
+    (ay) => normalizeAcademicYearLabel(ay) === currentAyLabel
+  );
+  if (!kitForCurrentAy) return false;
+
+  const expectedStudyYear = getExpectedStudyYearForStudent(student, date);
+  if (!expectedStudyYear || expectedStudyYear < 1) return false;
+
+  const productYears = getProductYears(product);
+  if (productYears.length === 0) return false;
+
+  return productYears.includes(expectedStudyYear);
 };
 
 export const formatAcademicYearsDisplay = (product) => {
@@ -71,13 +105,14 @@ export const productMatchesStudentRules = (product, student) => {
   }
 
   const productYears = getProductYears(product);
-  const studentYear = Number(student.year);
-  if (productYears.length > 0) {
+  const kitAcademicYears = getProductAcademicYears(product);
+
+  if (product.isSet && kitAcademicYears.length > 0) {
+    if (!kitMatchesStudentBatchAndAcademicYear(product, student)) return false;
+  } else if (productYears.length > 0) {
+    const studentYear = Number(student.year);
     if (!studentYear || !productYears.includes(studentYear)) return false;
   }
-
-  // Kit academicYears is a catalogue label only (e.g. 2025-26) — not validated at match time.
-  // Applicability is course + study year + branch + semester.
 
   const productBranchIds = Array.isArray(product.branchIds) ? product.branchIds : [];
   if (productBranchIds.length > 0 && student.branchId) {

@@ -1,6 +1,6 @@
 /**
  * Academic year labels (e.g. 2025-26) for kit catalogue tagging.
- * Not used to filter students at runtime — separate from SQL student batch (joining year).
+ * Kits use academicYears + student batch to determine applicability at runtime.
  */
 
 /** @param {number} startYear first calendar year of the academic year */
@@ -68,9 +68,40 @@ export const inferStudentIntakeAcademicYear = (student, date = new Date()) => {
   return formatAcademicYearLabel(intakeStart);
 };
 
+/** Parse intake/joining year from SQL batch (e.g. 2024, or 2024-25 → 2024). */
+export const parseBatchStartYear = (student) => {
+  const raw = student?.batch || student?.academicYear;
+  if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+
+  const str = String(raw).trim();
+  const yearOnly = str.match(/^(\d{4})$/);
+  if (yearOnly) return Number(yearOnly[1]);
+
+  const ayMatch = str.match(/^(\d{4})-/);
+  if (ayMatch) return Number(ayMatch[1]);
+
+  return null;
+};
+
+/** Parse academic year label start year (e.g. 2025-26 → 2025). */
+export const parseAcademicYearStart = (label) => {
+  const normalized = normalizeAcademicYearLabel(label);
+  const match = normalized.match(/^(\d{4})-/);
+  return match ? Number(match[1]) : null;
+};
+
 /**
- * Student SQL batch (joining year) — display/reporting only, not used for kit matching.
+ * Study year for a student in the current academic year from batch.
+ * Batch 2024 in AY 2025-26 → year 2.
  */
+export const getExpectedStudyYearForStudent = (student, date = new Date()) => {
+  const batchStart = parseBatchStartYear(student);
+  if (!batchStart) return null;
+  const ayStart = getCurrentAcademicYearStart(date);
+  return ayStart - batchStart + 1;
+};
+
+/** Student SQL batch as academic year label when stored as YYYY-YY. */
 export const getStudentAcademicYear = (student, date = new Date()) => {
   const fromSql = student?.batch || student?.academicYear;
   if (fromSql && String(fromSql).trim()) {

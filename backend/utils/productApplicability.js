@@ -1,8 +1,14 @@
 /**
  * Shared rules for matching academic products/kits to a student.
- * academicYears on a kit is a catalogue label (e.g. "2025-26") — not used in runtime matching.
- * Student SQL batch (joining year) is also not used here.
+ * Kits with academicYears are matched using student batch + current academic year.
  */
+
+const {
+  getDefaultAcademicYear,
+  normalizeAcademicYearLabel,
+  parseBatchStartYear,
+  getExpectedStudyYearForStudent,
+} = require('./academicYears');
 
 const normalizeCourse = (value) => {
   if (!value) return '';
@@ -33,6 +39,36 @@ const getProductAcademicYears = (product) => {
 };
 
 /**
+ * Kits tagged with academicYears apply only when:
+ * 1. The kit's academic year matches the current academic year
+ * 2. The student's batch implies the kit's configured study year in that AY
+ *    (batch 2024 + AY 2025-26 → 2nd year)
+ */
+const kitMatchesStudentBatchAndAcademicYear = (product, student, date = new Date()) => {
+  if (!product?.isSet) return true;
+
+  const kitAcademicYears = getProductAcademicYears(product);
+  if (kitAcademicYears.length === 0) return true;
+
+  const studentBatch = parseBatchStartYear(student);
+  if (!studentBatch) return false;
+
+  const currentAyLabel = normalizeAcademicYearLabel(getDefaultAcademicYear(date));
+  const kitForCurrentAy = kitAcademicYears.some(
+    (ay) => normalizeAcademicYearLabel(ay) === currentAyLabel
+  );
+  if (!kitForCurrentAy) return false;
+
+  const expectedStudyYear = getExpectedStudyYearForStudent(student, date);
+  if (!expectedStudyYear || expectedStudyYear < 1) return false;
+
+  const productYears = getProductYears(product);
+  if (productYears.length === 0) return false;
+
+  return productYears.includes(expectedStudyYear);
+};
+
+/**
  * @param {object} product - Mongo product document
  * @param {object} student - normalized student ({ course, courseId, year, semester, branch, branchId })
  * @returns {boolean}
@@ -59,8 +95,12 @@ const productAppliesToStudent = (product, student) => {
   }
 
   const productYears = getProductYears(product);
-  const studentYear = Number(student.year);
-  if (productYears.length > 0) {
+  const kitAcademicYears = getProductAcademicYears(product);
+
+  if (product.isSet && kitAcademicYears.length > 0) {
+    if (!kitMatchesStudentBatchAndAcademicYear(product, student)) return false;
+  } else if (productYears.length > 0) {
+    const studentYear = Number(student.year);
     if (!studentYear || !productYears.includes(studentYear)) return false;
   }
 
@@ -96,5 +136,6 @@ module.exports = {
   normalizeAcademicYear,
   getProductYears,
   getProductAcademicYears,
+  kitMatchesStudentBatchAndAcademicYear,
   productAppliesToStudent,
 };

@@ -5,7 +5,7 @@ import { useReactToPrint } from 'react-to-print';
 import jsPDF from 'jspdf';
 import { apiUrl } from '../utils/api';
 import useOnlineStatus from '../hooks/useOnlineStatus';
-import { isAddOnProductForStudent } from '../utils/productApplicability';
+import { isAddOnProductForStudent, productMatchesStudentRules } from '../utils/productApplicability';
 
 const normalizeValue = (value) => {
   if (!value) return '';
@@ -401,19 +401,7 @@ const StudentReceiptModal = ({
         .filter(Boolean);
     }
 
-    return (products || []).filter((p) => {
-      if (p.forCourse) {
-        const normalizedCourse = normalizeValue(p.forCourse);
-        if (normalizedCourse && normalizedCourse !== normalizeValue(student.course)) {
-          return false;
-        }
-      }
-      const productYears = p.years || (p.year ? [p.year] : []);
-      if (productYears.length > 0 && !productYears.includes(Number(student.year))) {
-        return false;
-      }
-      return true;
-    });
+    return (products || []).filter((p) => productMatchesStudentRules(p, student));
   }, [products, student, prefilledItems, mode]);
 
   const filteredItems = useMemo(() => {

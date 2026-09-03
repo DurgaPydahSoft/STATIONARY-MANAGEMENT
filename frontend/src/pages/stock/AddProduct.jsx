@@ -49,7 +49,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
     setPriceAdjustVal('');
   };
   const [viewMode, setViewMode] = useState('table');
-  const [affectExistingTransactions, setAffectExistingTransactions] = useState(false);
+  const [existingSyncMode, setExistingSyncMode] = useState('none'); // 'none' | 'normal' | 'custom'
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -355,8 +355,21 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
     };
   }, [formData.setItems, products, selectedProduct, setCompositionChanged]);
 
+  const canUseCustomSync =
+    setChangeDetails.removed.length > 0 && setChangeDetails.added.length > 0;
+
   useEffect(() => {
-    if (!setCompositionChanged || !selectedProduct?._id) {
+    if (!setCompositionChanged) {
+      setExistingSyncMode('none');
+      return;
+    }
+    if (existingSyncMode === 'custom' && !canUseCustomSync) {
+      setExistingSyncMode('normal');
+    }
+  }, [setCompositionChanged, canUseCustomSync, existingSyncMode]);
+
+  useEffect(() => {
+    if (!setCompositionChanged || !selectedProduct?._id || existingSyncMode === 'none') {
       setImpactPreview(null);
       setLoadingImpactPreview(false);
       return;
@@ -375,6 +388,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
               productId: item.productId,
               quantity: item.quantity,
             })),
+            existingSyncMode,
           }),
         });
 
@@ -403,7 +417,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
     return () => {
       cancelled = true;
     };
-  }, [formData.setItems, selectedProduct?._id, setCompositionChanged]);
+  }, [formData.setItems, selectedProduct?._id, setCompositionChanged, existingSyncMode]);
 
   useEffect(() => {
     if (selectedProduct && showProductDetail) {
@@ -497,7 +511,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
       }
 
       setSetItemToAdd('');
-      setAffectExistingTransactions(false);
+      setExistingSyncMode('none');
       setImpactPreview(null);
       setIsEditing(false);
     }
@@ -529,7 +543,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
       setFetchedStudents([]);
       setError('');
       setSetItemToAdd('');
-      setAffectExistingTransactions(false);
+      setExistingSyncMode('none');
       setImpactPreview(null);
       setSelectedConfigCourseId(''); // Reset our new state
     }
@@ -905,7 +919,8 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
             collegeId: activeCollegeId || undefined,
             applicabilityMode: formData.applicabilityMode,
             applicableStudents: formData.applicabilityMode === 'students' ? formData.applicableStudents.filter(s => s && s._id).map(s => s._id) : [],
-            affectExistingTransactions: setCompositionChanged ? affectExistingTransactions : false,
+            affectExistingTransactions: setCompositionChanged && existingSyncMode !== 'none',
+            existingSyncMode: setCompositionChanged && existingSyncMode !== 'none' ? existingSyncMode : 'none',
           }),
         });
 
@@ -921,14 +936,13 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
 
         handleProductUpdate(updated);
         if (updated?.syncSummary?.affectedExistingTransactions) {
-          setStatusMsg(`Product updated. Existing issued kits updated in ${updated.syncSummary.transactionsUpdated || 0} transaction(s); stock reconciled in ${updated.syncSummary.collegeStocksAdjusted || 0} college(s).`);
+          const modeLabel = updated.syncSummary.syncMode === 'custom' ? 'customized' : 'normal';
+          setStatusMsg(
+            `Product updated (${modeLabel} sync). Existing kits updated in ${updated.syncSummary.transactionsUpdated || 0} transaction(s); stock reconciled in ${updated.syncSummary.collegeStocksAdjusted || 0} college(s).`
+          );
           setTimeout(() => setStatusMsg(''), 5000);
         } else if (setCompositionChanged) {
-          setStatusMsg(
-            affectExistingTransactions
-              ? 'Product updated.'
-              : 'Product updated. Existing issued kits were left unchanged.'
-          );
+          setStatusMsg('Product updated. Existing issued kits were left unchanged.');
           setTimeout(() => setStatusMsg(''), 4000);
         } else {
           setStatusMsg('Product updated successfully!');
@@ -1903,22 +1917,72 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
 
                             {setCompositionChanged && (
                               <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-4 space-y-4">
-                                <label className="flex items-start gap-3 text-sm text-amber-900">
-                                  <input
-                                    type="checkbox"
-                                    checked={affectExistingTransactions}
-                                    onChange={(e) => setAffectExistingTransactions(e.target.checked)}
-                                    className="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
-                                  />
-                                  <span>
-                                    <span className="block font-semibold">
-                                      Also apply this kit item change to students who already received this kit
+                                <div>
+                                  <p className="text-sm font-semibold text-amber-900">
+                                    Kit items changed — how should existing students be handled?
+                                  </p>
+                                  <p className="text-xs text-amber-800 mt-1">
+                                    Future students always get the new kit. Choose what to do for already issued kits.
+                                  </p>
+                                </div>
+
+                                <div className="space-y-2 text-sm">
+                                  <label className="flex items-start gap-3 bg-white border border-amber-100 rounded-lg px-3 py-2 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name="existingSyncMode"
+                                      checked={existingSyncMode === 'none'}
+                                      onChange={() => setExistingSyncMode('none')}
+                                      className="mt-1 border-amber-300 text-amber-600 focus:ring-amber-500"
+                                    />
+                                    <span>
+                                      <span className="font-semibold text-gray-800">Do not change existing students</span>
+                                      <span className="block text-xs text-gray-600 mt-0.5">
+                                        Only future issues use the new kit. Old transactions stay as they are.
+                                      </span>
                                     </span>
-                                    <span className="block text-xs text-amber-800 mt-1">
-                                      Review the detailed impact below. If enabled, old issued kit transactions will be updated and stock will be reconciled accordingly.
+                                  </label>
+
+                                  <label className="flex items-start gap-3 bg-white border border-amber-100 rounded-lg px-3 py-2 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name="existingSyncMode"
+                                      checked={existingSyncMode === 'normal'}
+                                      onChange={() => setExistingSyncMode('normal')}
+                                      className="mt-1 border-amber-300 text-amber-600 focus:ring-amber-500"
+                                    />
+                                    <span>
+                                      <span className="font-semibold text-gray-800">Normal flow</span>
+                                      <span className="block text-xs text-gray-600 mt-0.5">
+                                        Update existing issued kit transactions to the new composition and reconcile stock for taken components now.
+                                      </span>
                                     </span>
-                                  </span>
-                                </label>
+                                  </label>
+
+                                  <label className={`flex items-start gap-3 bg-white border rounded-lg px-3 py-2 ${canUseCustomSync ? 'border-amber-100 cursor-pointer' : 'border-gray-100 opacity-60 cursor-not-allowed'}`}>
+                                    <input
+                                      type="radio"
+                                      name="existingSyncMode"
+                                      checked={existingSyncMode === 'custom'}
+                                      disabled={!canUseCustomSync}
+                                      onChange={() => setExistingSyncMode('custom')}
+                                      className="mt-1 border-amber-300 text-amber-600 focus:ring-amber-500"
+                                    />
+                                    <span>
+                                      <span className="font-semibold text-gray-800">Customized flow (replace old product → new product)</span>
+                                      <span className="block text-xs text-gray-600 mt-0.5">
+                                        Replaces the old product with the new one on existing kits only.
+                                        Always restores old stock and deducts the new product (stock may go negative).
+                                        If new stock is not enough, that component is marked not taken and appears in Zero Stock Dues — Mark as Taken later will not deduct again.
+                                      </span>
+                                      {!canUseCustomSync && (
+                                        <span className="block text-xs text-amber-700 mt-1">
+                                          Available when at least one item is removed and one item is added.
+                                        </span>
+                                      )}
+                                    </span>
+                                  </label>
+                                </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                                   <div className="bg-white border border-green-200 rounded-lg p-3">
@@ -1963,9 +2027,32 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                                   </div>
                                 </div>
 
+                                {existingSyncMode === 'custom' && setChangeDetails.removed.length > 0 && setChangeDetails.added.length > 0 && (
+                                  <div className="bg-white border border-indigo-200 rounded-lg p-3 text-xs space-y-2">
+                                    <p className="font-semibold text-indigo-900">Customized replacement plan</p>
+                                    {setChangeDetails.removed.map((oldItem, index) => {
+                                      const newItem = setChangeDetails.added[index] || setChangeDetails.added[0];
+                                      if (!newItem) return null;
+                                      return (
+                                        <p key={`pair-${oldItem.productId}-${newItem.productId}`} className="text-gray-700">
+                                          {oldItem.name} x{oldItem.quantity} {'->'} {newItem.name} x{newItem.quantity}
+                                        </p>
+                                      );
+                                    })}
+                                    <p className="text-indigo-800">
+                                      Delivered students: stock moves to the new product now.
+                                      Waiting students: stay in Zero Stock Dues for the new product.
+                                    </p>
+                                  </div>
+                                )}
+
+                                {existingSyncMode !== 'none' && (
                                 <div className="bg-white border border-amber-200 rounded-lg p-3 text-xs space-y-3">
                                   <div className="flex items-center justify-between gap-3">
-                                    <p className="font-semibold text-amber-900">Impact On Existing Issued Kits</p>
+                                    <p className="font-semibold text-amber-900">
+                                      Impact On Existing Issued Kits
+                                      {existingSyncMode === 'custom' ? ' (Customized)' : ' (Normal)'}
+                                    </p>
                                     {loadingImpactPreview && (
                                       <span className="text-amber-700">Calculating...</span>
                                     )}
@@ -1987,6 +2074,30 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                                           <p className="text-lg font-bold text-amber-900">{impactPreview.collegeStocksAdjusted || 0}</p>
                                         </div>
                                       </div>
+
+                                      {existingSyncMode === 'custom' && (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                          <div className="bg-green-50 rounded-lg p-3">
+                                            <p className="text-[11px] uppercase tracking-wide text-green-700 font-semibold">Delivered (deduct new now)</p>
+                                            <p className="text-lg font-bold text-green-900">{impactPreview.deliveredCount || 0}</p>
+                                          </div>
+                                          <div className="bg-orange-50 rounded-lg p-3">
+                                            <p className="text-[11px] uppercase tracking-wide text-orange-700 font-semibold">Zero Stock Dues (waiting)</p>
+                                            <p className="text-lg font-bold text-orange-900">{impactPreview.waitingCount || 0}</p>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {(impactPreview.replacements || []).length > 0 && (
+                                        <div className="space-y-1">
+                                          <p className="font-semibold text-amber-900">Replacements</p>
+                                          {(impactPreview.replacements || []).map((pair) => (
+                                            <p key={`${pair.fromProductId}-${pair.toProductId}`} className="text-gray-700">
+                                              {pair.fromProductName} {'->'} {pair.toProductName}
+                                            </p>
+                                          ))}
+                                        </div>
+                                      )}
 
                                       {(impactPreview.colleges || []).length > 0 ? (
                                         <div className="space-y-3">
@@ -2025,6 +2136,7 @@ const AddProduct = ({ itemCategories, addItemCategory, setItemCategories, curren
                                     )
                                   )}
                                 </div>
+                                )}
                               </div>
                             )}
                           </div>

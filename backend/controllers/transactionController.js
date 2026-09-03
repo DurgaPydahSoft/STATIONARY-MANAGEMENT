@@ -138,6 +138,20 @@ const toComponentId = (comp) => {
   return id || null;
 };
 
+/**
+ * Was college stock already deducted for this component?
+ * - Explicit stockReserved flag wins
+ * - Legacy docs (no flag): old create always deducted, even when taken=false
+ */
+const wasStockReserved = (comp) => {
+  if (!comp) return false;
+  if (Object.prototype.hasOwnProperty.call(comp, 'stockReserved') && comp.stockReserved !== undefined && comp.stockReserved !== null) {
+    return Boolean(comp.stockReserved);
+  }
+  // Legacy behavior: stock was deducted at paid issue even for not-taken components
+  return true;
+};
+
 /** Reserve all set components on initial paid sale (matches createTransaction). */
 const reserveSetComponents = (stockChanges, product, quantity) => {
   if (!product?.isSet || !product.setItems?.length) return;
@@ -153,8 +167,32 @@ const reserveSetComponents = (stockChanges, product, quantity) => {
   }
 };
 
-/** Restore full set reservation (all components). */
+/** Deduct only components that are taken AND not yet reserved. */
+const reserveTakenSetComponents = (stockChanges, setComponents = []) => {
+  (setComponents || []).forEach((comp) => {
+    if (!comp || comp.taken === false) return;
+    if (wasStockReserved(comp)) return;
+    const componentId = toComponentId(comp);
+    const qty = Number(comp.quantity) || 0;
+    if (!componentId || qty <= 0) return;
+    accumulateStockChange(stockChanges, componentId, -qty);
+  });
+};
+
+/** Restore set reservation only for components that actually had stock deducted. */
 const restoreSetComponentsFully = (stockChanges, product, item) => {
+  const comps = Array.isArray(item?.setComponents) ? item.setComponents : [];
+  if (comps.length > 0) {
+    comps.forEach((comp) => {
+      if (!wasStockReserved(comp)) return;
+      const componentId = toComponentId(comp);
+      const qty = Number(comp.quantity) || 0;
+      if (!componentId || qty <= 0) return;
+      accumulateStockChange(stockChanges, componentId, qty);
+    });
+    return;
+  }
+
   if (!product?.isSet || !product.setItems?.length) return;
   const qty = Number(item?.quantity) || 0;
   if (qty <= 0) return;
@@ -171,8 +209,8 @@ const restoreSetComponentsFully = (stockChanges, product, item) => {
 /**
  * When stock was already deducted on the original paid sale, only apply deltas:
  * - quantity change → adjust reservation
- * - taken true→false → release reservation
- * - taken false→true or status-only updates → no extra deduction
+ * - taken true→false → release only if stockReserved
+ * - taken false→true → deduct only if NOT already stockReserved (avoids double deduction)
  */
 const applySetStockDeltaWhenAlreadyDeducted = (
   stockChanges,
@@ -209,17 +247,23 @@ const applySetStockDeltaWhenAlreadyDeducted = (
 
     const oldComp = oldCompMap.get(componentId);
     const newComp = newCompMap.get(componentId);
-    const oldTaken = oldComp ? Boolean(oldComp.taken) : false;
+    const oldTaken = oldComp ? oldComp.taken !== false : false;
     const hasNewTakenFlag =
       newComp && Object.prototype.hasOwnProperty.call(newComp, 'taken');
     const newTaken = hasNewTakenFlag ? Boolean(newComp.taken) : oldTaken;
+    const oldReserved = wasStockReserved(oldComp);
 
-    if (qtyDelta !== 0) {
+    if (qtyDelta !== 0 && oldReserved) {
       accumulateStockChange(stockChanges, componentId, -(newRequired - oldRequired));
     }
-    if (oldTaken && !newTaken) {
+    if (oldTaken && !newTaken && oldReserved) {
+      // Release reservation when marking not taken
       accumulateStockChange(stockChanges, componentId, newRequired);
+    } else if (!oldTaken && newTaken && !oldReserved) {
+      // Deduct only when waiting component was never reserved yet
+      accumulateStockChange(stockChanges, componentId, -newRequired);
     }
+    // !oldTaken && newTaken && oldReserved → legacy already deducted; no second deduct
   }
 };
 
@@ -471,16 +515,18 @@ const createTransaction = asyncHandler(async (req, res) => {
             taken = false;
             if (explicitStatus !== 'fulfilled') itemStatus = 'partial';
             reason = `Insufficient stock at college (required ${required}, available ${Math.max(available, 0)})`;
-          } 
-          
-          // Always deduct stock if paid, even if it goes negative
-          accumulateStockChange(stockChanges, componentId, -required);
+            // Do NOT deduct when not taken — student waits in zero-stock dues.
+            // Stock is deducted later when "Mark as Taken" is used (stockReserved=false).
+          } else {
+            accumulateStockChange(stockChanges, componentId, -required);
+          }
 
           componentDetails.push({
             productId: component._id,
             name: component.name,
             quantity: required,
             taken,
+            stockReserved: Boolean(taken),
             reason: taken ? undefined : reason,
           });
         } else {
@@ -489,6 +535,7 @@ const createTransaction = asyncHandler(async (req, res) => {
             name: component.name,
             quantity: required,
             taken: true,
+            stockReserved: false, // unpaid: no stock deducted yet
           });
         }
       }
@@ -791,11 +838,39 @@ const updateTransaction = asyncHandler(async (req, res) => {
             }
           }
 
+          const oldComp = oldItem?.setComponents
+            ? (oldItem.setComponents || []).find((c) => toComponentId(c) === componentId)
+            : null;
+          const oldTaken = oldComp ? oldComp.taken !== false : false;
+          const oldReserved = wasStockReserved(oldComp);
+
+          // Resolve whether stock should be considered reserved after this update
+          let stockReserved = oldReserved;
+          if (wasStockDeducted && targetIsPaid) {
+            if (oldTaken && !taken && oldReserved) {
+              stockReserved = false; // released
+            } else if (!oldTaken && taken && !oldReserved) {
+              stockReserved = true; // newly deducted on mark-as-taken
+            } else if (!oldTaken && taken && oldReserved) {
+              stockReserved = true; // legacy already deducted; keep reserved, no second deduct
+            } else if (taken && !oldComp) {
+              stockReserved = true;
+            } else if (!taken) {
+              stockReserved = false;
+            }
+          } else if (!wasStockDeducted && targetIsPaid) {
+            // Not reserved yet — reserveTakenSetComponents deducts, then we flip to true
+            stockReserved = false;
+          } else if (!targetIsPaid) {
+            stockReserved = false;
+          }
+
           componentDetails.push({
             productId: component._id,
             name: component.name,
             quantity: required,
             taken,
+            stockReserved,
             reason: taken ? undefined : reason,
           });
         }
@@ -811,10 +886,17 @@ const updateTransaction = asyncHandler(async (req, res) => {
         if (wasStockDeducted && !targetIsPaid) {
           if (oldItem) restoreSetComponentsFully(stockChanges, product, oldItem);
         } else if (!wasStockDeducted && targetIsPaid) {
-          reserveSetComponents(stockChanges, product, requestedQuantity);
+          // First-time paid: deduct taken comps that are not yet reserved
+          reserveTakenSetComponents(stockChanges, componentDetails);
+          componentDetails.forEach((comp) => {
+            if (comp.taken !== false) comp.stockReserved = true;
+          });
         } else if (wasStockDeducted && targetIsPaid) {
           if (!oldItem) {
-            reserveSetComponents(stockChanges, product, requestedQuantity);
+            reserveTakenSetComponents(stockChanges, componentDetails);
+            componentDetails.forEach((comp) => {
+              if (comp.taken !== false) comp.stockReserved = true;
+            });
           } else {
             applySetStockDeltaWhenAlreadyDeducted(
               stockChanges,
@@ -927,7 +1009,7 @@ const updateTransaction = asyncHandler(async (req, res) => {
           if (!product) continue;
 
           if (product.isSet) {
-            reserveSetComponents(stockChanges, product, item.quantity);
+            reserveTakenSetComponents(stockChanges, item.setComponents || []);
           } else {
             accumulateStockChange(stockChanges, productId, -item.quantity);
           }

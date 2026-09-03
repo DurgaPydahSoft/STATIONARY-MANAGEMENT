@@ -113,6 +113,10 @@ const transactionSchema = new mongoose.Schema(
             name: { type: String, required: false, trim: true },
             quantity: { type: Number, min: 0, default: 0 },
             taken: { type: Boolean, default: true },
+            // true = college stock already deducted for this component
+            // false = waiting (zero-stock dues); deduct later on Mark as Taken
+            // missing on legacy docs = treat as true (old create always deducted)
+            stockReserved: { type: Boolean, default: undefined },
             reason: { type: String, trim: true, default: '' },
           },
         ],
